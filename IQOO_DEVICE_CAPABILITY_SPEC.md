@@ -141,6 +141,38 @@ Be explicit about this distinction in the pitch: **Office Kit is a hackathon bui
 
 **NPU-1 · On-device semantic HSN match** — replace/front the existing pgvector semantic-fallback pass in `hsn.py` with a small on-device sentence-embedding model (ONNX, NPU-accelerated) for the *first* pass, falling back to the cloud pgvector path only on low-confidence. → This is the one idea in the whole catalog that satisfies "local model at the core" without being a bolt-on gimmick — it accelerates and localizes a real, already-existing, already-correct engine component (`hsn.py`'s two-pass exact+semantic design), rather than adding a cosmetic feature next to the real product. → **L** (swapping a model into a working pipeline under time pressure is genuinely risky) → `PRODUCT` + `SCORE` → **catalog unless the Saturday teach-in reveals iQOO-provided tooling that makes this trivial (they mention free AI credits + NPU-targeted tooling at check-in — reassess after that).**
 
+  **Status: IN PROGRESS — scaffolded, not verified end-to-end.** What's
+  actually underway diverges from this entry's original mechanism: nothing
+  has touched the semantic HSN-match pass in `hsn.py`, and that idea remains
+  unattempted. Instead, a separate genuine "local model at the core" feature
+  is being built: a new `mobile/` React Native (Expo) app wraps the existing
+  trader PWA in a WebView and integrates `llama.rn` (the React Native binding
+  for llama.cpp) to run a small on-device LLM for one narrow job — narrating
+  an already-computed ITC verdict in natural language (Hindi/English), as a
+  fully offline alternative to the existing Gemini-based explanation call.
+  Same boundary this spec draws everywhere else: it does not touch OCR (still
+  Gemini vision, server-side) and does not touch any compliance/verdict logic
+  (still 100% deterministic backend Python — `itc_engine.py`, `fraud.py`,
+  `reconciler.py` untouched). This is purely an alternate narration path for
+  output the backend already computes, not a new source of truth.
+
+  Two things are unverified, and for the same underlying reason — none of
+  this has run on real hardware yet:
+  - **NPU execution is unconfirmed.** llama.cpp/llama.rn's Hexagon NPU
+    backend is experimental and requires Snapdragon 8 Gen 2 or newer. The
+    phones for this are loaner devices issued at check-in with unknown
+    chipset, so NPU execution may not even be available depending on what
+    shows up. This doesn't sink the underlying claim, though — llama.rn's
+    automatic CPU/Adreno-GPU fallback is reliable regardless of chipset and
+    is what actually satisfies "local model at the core" here; NPU
+    acceleration would be a bonus on top, not the mechanism the claim
+    depends on.
+  - **No full build/install has run.** Producing an installable build
+    requires an Expo/EAS account login (`eas login`, an interactive OAuth
+    step), and final verification requires a physical device — neither
+    exists in the current dev environment. This entry is unverified beyond
+    code-level review until hackathon check-in.
+
 ---
 
 ## 3. What to actually build (priority order, given 30 hours and existing bug-fix backlog)
@@ -150,7 +182,7 @@ Be explicit about this distinction in the pitch: **Office Kit is a hackathon bui
 3. **OCV-2 (auto-crop)** — only if OCV-1 lands with room to spare; shares its scaffolding.
 4. **MDX-1 + MDX-2 (demo choreography)** — zero new code, pure rehearsal; do this regardless of how the build goes, since it costs nothing but planning time.
 5. **VOI-1 (voice queries)** — stretch goal, after 1–4 are solid.
-6. Everything else in the catalog (OCV-4, VOI-3, NPU-1) — **do not attempt live**. These are Grand Finale / post-event roadmap items. Naming them in the pitch as "what's next" costs nothing and signals technical range without the risk of a half-built feature failing on stage. (OCV-3 was later built post-event, with more time available than this list assumed — see its entry above.)
+6. Everything else in the catalog (OCV-4, VOI-3, NPU-1) — **do not attempt live**. These are Grand Finale / post-event roadmap items. Naming them in the pitch as "what's next" costs nothing and signals technical range without the risk of a half-built feature failing on stage. (OCV-3 was later built post-event, with more time available than this list assumed — see its entry above. NPU-1 was later picked up post-event too, though as a different mechanism than originally catalogued and still unverified — see its entry above.)
 
 Do not let `SCORE`-chasing crowd out the actual bug-fix backlog (§ below) — a product that's polished on telemetry but breaks when a judge asks for a real reconciled invoice loses more on the 70% jury-scored side than it gains on the 25% device-scored side.
 
