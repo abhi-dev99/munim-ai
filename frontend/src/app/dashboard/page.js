@@ -18,8 +18,6 @@ import { useLanguage } from "../context/LanguageContext";
 import {
   ChevronDown,
   Users,
-  ToggleLeft,
-  ToggleRight,
   Upload,
   AlertTriangle,
   CheckCircle2,
@@ -573,7 +571,7 @@ export default function Home() {
         onMobileClose={() => setMobileNavOpen(false)}
       />
 
-      <main className="flex-1 md:ml-64 flex flex-col overflow-hidden">
+      <main className="flex-1 md:ml-64 flex flex-col lg:overflow-hidden">
         {/* Header — h-[65px] matches sidebar logo bar */}
         <header className="flex-none h-[65px] px-4 md:px-6 border-b border-gray-200 bg-white flex items-center">
           <div className="flex items-center justify-between w-full gap-2">
@@ -646,20 +644,6 @@ export default function Home() {
               </div>
 
 
-
-              {/* Composition toggle */}
-              <button
-                onClick={() => setIsComposition(!isComposition)}
-                className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors shadow-sm"
-              >
-                {isComposition ? (
-                  <ToggleRight size={18} className="text-[#10b981]" />
-                ) : (
-                  <ToggleLeft size={18} className="text-gray-400" />
-                )}
-                <span className="text-sm font-semibold text-gray-800">{t("hdr_composition")}</span>
-              </button>
-
               {/* Onboard a new trader — QR code deep link into WhatsApp onboarding */}
               <button
                 onClick={() => setShowOnboardModal(true)}
@@ -709,14 +693,14 @@ export default function Home() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-4 p-4 overflow-y-auto lg:overflow-hidden"
+            className="flex-1 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_280px] gap-4 p-4 overflow-y-auto lg:overflow-hidden"
           >
             {/* Left (2/3) — Main content + Invoice Feed */}
             <motion.div
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.08, duration: 0.3 }}
-              className="flex flex-col gap-4 min-h-0 lg:overflow-hidden pr-1"
+              className="flex flex-col gap-4 lg:min-h-0 lg:overflow-hidden pr-1"
             >
               {activeTab === "money-meter" && (
                 <MoneyMeter summary={summary} apiBase={API_BASE} isComposition={isComposition} onSwitchTab={setActiveTab} prefs={fullPrefs} onSortTop={handleMoneyMeterSortTop} onSortBottom={handleMoneyMeterSortBottom} />
@@ -733,7 +717,7 @@ export default function Home() {
 
               {/* Invoice feed — always visible on money-meter tab */}
               {activeTab === "money-meter" && (
-                <div className="flex-1 min-h-0 overflow-hidden flex flex-col border border-gray-200 bg-white rounded-xl" style={{ minHeight: 280 }}>
+                <div className="flex-1 lg:min-h-0 lg:overflow-hidden flex flex-col border border-gray-200 bg-white rounded-xl" style={{ minHeight: 280 }}>
                   <InvoiceFeed traderId={traderId} apiBase={API_BASE} />
                 </div>
               )}
@@ -745,7 +729,7 @@ export default function Home() {
               initial={{ opacity: 0, x: 8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.12, duration: 0.3 }}
-              className="flex flex-col gap-3 min-h-0 overflow-y-auto pr-1"
+              className="flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto pr-1"
             >
               {rightRailOrder.map((id, idx) => renderRightRailWidget(id, idx))}
             </motion.div>

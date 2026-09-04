@@ -322,8 +322,8 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
         </div> {/* Close z-10 header container */}
 
         {/* Table */}
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0 mb-4">
-          <div className="overflow-auto flex-1">
+        <div className="bg-white border border-gray-200 rounded-xl lg:overflow-hidden flex flex-col flex-1 lg:min-h-0 mb-4">
+          <div className="lg:overflow-auto flex-1">
             <table className="w-full text-sm border-collapse relative">
               <thead className="sticky top-0 z-20 shadow-sm">
                 <tr className="border-b border-gray-100">
