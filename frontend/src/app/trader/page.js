@@ -32,30 +32,18 @@ const QUALITY_ANALYSIS_MAX_DIMENSION = 800;
 // to the offline queue instead of leaving the trader staring at a spinner.
 const UPLOAD_TIMEOUT_MS = 30000;
 
-// How long the upload is willing to wait for the on-device HSN match before
-// giving up on attaching it to *this* request and uploading without it. The
-// match itself (frontend/src/app/utils/hsnMatch.js) has its own longer
-// internal timeout and keeps running in the background regardless — a miss
-// here just means the model/index finish warming up in time for the next
-// scan instead of this one. Deliberately much shorter than
-// UPLOAD_TIMEOUT_MS: this is "don't block on it", not "wait for it".
-const HSN_MATCH_ATTACH_WINDOW_MS = 800;
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // There's no on-device OCR in this app (see OCV-3 in
-// IQOO_DEVICE_CAPABILITY_SPEC.md — deliberately not built), so the only
-// text available client-side before the backend extracts real line items is
-// whatever the file is named. Real captures from a phone camera are usually
-// unhelpful ("IMG_2451.jpg") and just won't clear the confidence threshold
-// in hsnMatch.js — that's fine, it's the same silent-no-op path as any
-// other low-confidence result. A descriptively-named forwarded photo or PDF
-// ("cement bags.pdf", "Ultratech_Cement_50kg.jpg") is where this actually
-// fires.
-function fileNameToHSNQuery(fileName) {
-  return (fileName || "").replace(/\.[^./\\]+$/, "").replace(/[_-]+/g, " ").trim();
+// IQOO_DEVICE_CAPABILITY_SPEC.md — deliberately not built), so there's no
+// line-item text available client-side before the backend extracts it. The
+// on-device HSN match therefore runs *after* the upload response comes
+// back, against the real `supplier_name`/`line_item_descriptions` Gemini
+// extracted — not before, and not against the file name. It's a display
+// enrichment on an already-successful scan, never something the upload
+// flow waits on.
+function hsnMatchQueryFrom(data) {
+  const items = (data.line_item_descriptions || []).join(", ");
+  if (items) return items;
+  return data.supplier_name || "";
 }
 
 /**
@@ -165,10 +153,9 @@ export default function TraderApp() {
   }, [scanState, scanResult]);
 
   // Warm the on-device HSN matcher (index + model download) as soon as the
-  // app is open, well before the trader taps "Scan Invoice" — the upload
-  // flow only waits HSN_MATCH_ATTACH_WINDOW_MS for a match, so starting
-  // this download at mount instead of at capture time is what gives it a
-  // realistic chance of being ready in time.
+  // app is open, well before the trader taps "Scan Invoice" — by the time a
+  // scan actually completes (after the Gemini round trip) the model has had
+  // a real chance to finish loading instead of starting cold.
   useEffect(() => {
     prewarmHSNMatcher();
   }, []);
@@ -208,27 +195,10 @@ export default function TraderApp() {
   // The actual network call, shared by a live upload and a drained queue
   // item so both go through identical request-building and response
   // handling — no second copy of this logic to drift out of sync.
-  // `hsnMatchPromise` is the (already-started, possibly still pending)
-  // on-device HSN match for this file — optional, since a drained queue
-  // item from an earlier session never had one. It's raced against
-  // HSN_MATCH_ATTACH_WINDOW_MS so a slow/cold match can never delay the
-  // actual upload; a miss just means this particular request goes up
-  // without the hint. The backend does not read hsn_hint_code/confidence
-  // today (see backend/app/domain/hsn.py — untouched, still the sole
-  // authority) — this is purely additive, forward-looking form data.
-  async function uploadInvoiceFile(file, fileName, forTraderId, hsnMatchPromise) {
-    const hsnHint = await Promise.race([
-      hsnMatchPromise || Promise.resolve(null),
-      delay(HSN_MATCH_ATTACH_WINDOW_MS).then(() => null),
-    ]);
-
+  async function uploadInvoiceFile(file, fileName, forTraderId) {
     const formData = new FormData();
     formData.append("file", file, fileName);
     formData.append("trader_id", forTraderId);
-    if (hsnHint) {
-      formData.append("hsn_hint_code", hsnHint.hsn_code);
-      formData.append("hsn_hint_confidence", String(hsnHint.confidence));
-    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
@@ -239,7 +209,7 @@ export default function TraderApp() {
         signal: controller.signal,
       });
       const data = await res.json();
-      return { ok: res.ok, data, hsnHint };
+      return { ok: res.ok, data };
     } finally {
       clearTimeout(timeoutId);
     }
@@ -252,22 +222,37 @@ export default function TraderApp() {
   // `online`-listener effect below registers its handler once on mount, so
   // a closure over `traderId` captured there would stay frozen at its
   // mount-time value (null) for the lifetime of the listener.
-  function applyUploadSuccess(data, forTraderId, hsnHint) {
+  function applyUploadSuccess(data, forTraderId) {
     setScanState("success");
     setScanResult({
+      invoiceId: data.invoice_id,
       status: data.itc_verdict?.status || "PROCESSING",
       itc_amount: data.itc_verdict?.itc_amount || 0,
       message: data.diagnosis_hi || data.diagnosis_en || "Invoice processed!",
       // Hint the TTS voice picker toward Hindi only when we actually got
       // Hindi text back — otherwise fall back to English.
       lang: data.diagnosis_hi ? "hi-IN" : "en-IN",
-      hsnHint: hsnHint || null,
+      hsnHint: null,
     });
     setTimeout(() => {
       setScanState("idle");
       setScanResult(null);
     }, 8000);
     if (forTraderId) refreshInvoiceHistory(forTraderId);
+
+    // Runs against the real extracted supplier/line-item text, once it
+    // actually exists — never against a guess made before the upload. Not
+    // awaited: this is a display enrichment on an already-successful scan,
+    // not something anything else waits on. Guarded by invoiceId so a match
+    // that resolves late can't stomp a *different*, newer scan result if
+    // the trader has already moved on to their next invoice.
+    const query = hsnMatchQueryFrom(data);
+    if (query) {
+      matchHSN(query).then((hint) => {
+        if (!hint) return;
+        setScanResult((prev) => (prev?.invoiceId === data.invoice_id ? { ...prev, hsnHint: hint } : prev));
+      });
+    }
   }
 
   async function queueForLater(file, forTraderId) {
@@ -283,7 +268,7 @@ export default function TraderApp() {
     }, 8000);
   }
 
-  async function handleInvoiceUpload(file, hsnMatchPromise) {
+  async function handleInvoiceUpload(file) {
     if (!file || !traderId || traderId === "demo") {
       setScanState("error");
       setScanResult({ message: "No active trader. Please set up your GSTIN first." });
@@ -299,9 +284,9 @@ export default function TraderApp() {
     setScanResult(null);
 
     try {
-      const { ok, data, hsnHint } = await uploadInvoiceFile(file, file.name, traderId, hsnMatchPromise);
+      const { ok, data } = await uploadInvoiceFile(file, file.name, traderId);
       if (ok) {
-        applyUploadSuccess(data, traderId, hsnHint);
+        applyUploadSuccess(data, traderId);
       } else {
         setScanState("error");
         setScanResult({ message: data.detail || "Processing failed. Try again." });
@@ -328,9 +313,6 @@ export default function TraderApp() {
       for (const item of queued) {
         if (!navigator.onLine) break;
         try {
-          // No hsnMatchPromise here — this file was queued in a past
-          // session (or earlier this one) and there's no live match still
-          // in flight for it, so it just uploads without the hint.
           const { ok, data } = await uploadInvoiceFile(item.file, item.fileName, item.metadata.trader_id);
           await removeQueuedUpload(item.id);
           if (ok) {
@@ -364,22 +346,16 @@ export default function TraderApp() {
   async function handleFileSelected(file) {
     if (!file) return;
 
-    // Kicked off immediately, in parallel with the photo-quality check
-    // below — by the time the upload actually happens (after that check,
-    // and possibly after a retake-prompt round trip) this has had a real
-    // head start against HSN_MATCH_ATTACH_WINDOW_MS.
-    const hsnMatchPromise = matchHSN(fileNameToHSNQuery(file.name));
-
     setCheckingPhoto(true);
     const verdict = await analyzeImageFile(file);
     setCheckingPhoto(false);
 
     if (verdict && !verdict.isAcceptable) {
-      setRetakePrompt({ file, verdict, hsnMatchPromise });
+      setRetakePrompt({ file, verdict });
       return;
     }
 
-    handleInvoiceUpload(file, hsnMatchPromise);
+    handleInvoiceUpload(file);
   }
 
   const statusColors = {
@@ -681,9 +657,9 @@ export default function TraderApp() {
               </button>
               <button
                 onClick={() => {
-                  const { file, hsnMatchPromise } = retakePrompt;
+                  const { file } = retakePrompt;
                   setRetakePrompt(null);
-                  handleInvoiceUpload(file, hsnMatchPromise);
+                  handleInvoiceUpload(file);
                 }}
                 className="w-full py-3 rounded-none border border-[var(--border-subtle)] text-[var(--text-secondary)] font-bold text-sm hover:bg-[var(--bg-primary)] transition-colors"
               >

@@ -155,9 +155,7 @@ Be explicit about this distinction in the pitch: **Office Kit is a hackathon bui
   have anything real to detect), matches
   against a curated local index of ~540 HSN codes
   (`frontend/public/hsn-index.json`, 1.82MB — built from live Supabase data
-  by `frontend/scripts/build-hsn-index.mjs`), and attaches the result as
-  extra `hsn_hint_code`/`hsn_hint_confidence` form fields the backend
-  doesn't read yet. Model: **`Xenova/all-MiniLM-L6-v2`, not
+  by `frontend/scripts/build-hsn-index.mjs`). Model: **`Xenova/all-MiniLM-L6-v2`, not
   `multilingual-e5-small`** as specced — every genuinely multilingual
   (Hindi-capable) embedding model in the Xenova org (`multilingual-e5-small`,
   `paraphrase-multilingual-MiniLM-L12-v2`,
@@ -166,21 +164,28 @@ Be explicit about this distinction in the pitch: **Office Kit is a hackathon bui
   MiniLM-L6's ~23MB — confirmed by checking actual `content-length` on the
   ONNX files, not assumed. Real invoice/HSN text sampled from the live DB is
   Latin-script English/Hinglish, not Devanagari, so this isn't a real
-  regression against the actual data. A second, more load-bearing deviation:
-  there is no on-device OCR in this app (OCV-3 was built as queue-and-defer,
-  not OCR triage — see its entry above), so the "extracted line-item
-  description" this feature was specced to embed doesn't exist client-side
-  before the backend's Gemini OCR call. The pre-upload pass instead embeds
-  the captured file's name (`fileNameToHSNQuery()` in `trader/page.js`) —
-  real signal when a trader uploads a descriptively-named photo/PDF, near-
-  certain no-op on a camera-default `IMG_2451.jpg`, which is fine: that's
-  the same low-confidence no-op path as any other miss. The match is raced
-  against an 800ms window (`HSN_MATCH_ATTACH_WINDOW_MS`) that can only make
-  it miss attaching to *this* upload, never delay it; the model+index are
-  pre-warmed on app mount (`prewarmHSNMatcher()`) so a same-session second
-  scan has a real chance of a warm hit. Shown as a small "On-device HSN
-  match: `<code>` (`<confidence>`%)" badge on the scan-result toast when
-  present. Unit-tested with Vitest against the pure cosine-similarity and
+  regression against the actual data. A second, more load-bearing deviation
+  found while building, and then corrected: there is no on-device OCR in
+  this app (OCV-3 was built as queue-and-defer, not OCR triage — see its
+  entry above), so the "extracted line-item description" this feature was
+  specced to embed doesn't exist client-side *before* upload — the first
+  build matched on the captured file's name instead, which is real signal on
+  a descriptively-named file and a near-certain no-op on a camera-default
+  `IMG_2451.jpg` (i.e. on the actual demo path). Corrected: `webhook.py`'s
+  `/upload-invoice` response now also returns `supplier_name` and
+  `line_item_descriptions` (both already extracted server-side by Gemini,
+  previously just never sent back), and the match runs *after* the upload
+  succeeds, against that real extracted text — `applyUploadSuccess()` in
+  `trader/page.js` fires it as a background enrichment on the just-shown
+  scan result, guarded by `invoiceId` so a match that resolves late can't
+  attach itself to a *different*, newer scan if the trader has already moved
+  on. Since it no longer runs before or during the upload, there's nothing
+  for it to delay — the pre-upload attach-window race was removed along
+  with the file-name fallback. The model+index are still pre-warmed on app
+  mount (`prewarmHSNMatcher()`) so the first real scan of a session isn't
+  paying the cold-download cost. Shown as a small "On-device HSN match:
+  `<code>` (`<confidence>`%)" badge on the scan-result toast when present.
+  Unit-tested with Vitest against the pure cosine-similarity and
   threshold-gating logic (`hsnMatch.test.js`) using small synthetic fixture
   embeddings rather than the real ~23MB model, plus a test asserting the
   safe no-op path when a required browser API (e.g. `window`, in the Node
