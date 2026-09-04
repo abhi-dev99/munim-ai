@@ -141,6 +141,51 @@ Be explicit about this distinction in the pitch: **Office Kit is a hackathon bui
 
 **NPU-1 · On-device semantic HSN match** — replace/front the existing pgvector semantic-fallback pass in `hsn.py` with a small on-device sentence-embedding model (ONNX, NPU-accelerated) for the *first* pass, falling back to the cloud pgvector path only on low-confidence. → This is the one idea in the whole catalog that satisfies "local model at the core" without being a bolt-on gimmick — it accelerates and localizes a real, already-existing, already-correct engine component (`hsn.py`'s two-pass exact+semantic design), rather than adding a cosmetic feature next to the real product. → **L** (swapping a model into a working pipeline under time pressure is genuinely risky) → `PRODUCT` + `SCORE` → **catalog unless the Saturday teach-in reveals iQOO-provided tooling that makes this trivial (they mention free AI credits + NPU-targeted tooling at check-in — reassess after that).**
 
+  **Status: BUILT** (branch `iqoo/on-device-hsn-match`). Shipped as a THIRD,
+  additive pass, not a replace/front of `hsn.py` — this entry's original
+  mechanism assumed swapping a local model into the backend's existing
+  two-pass pipeline; that never happened and turned out to be the wrong
+  shape for the constraint anyway. `hsn.py` is untouched and remains the
+  sole authority the ITC engine reads from. Instead: a real ONNX
+  sentence-embedding model runs client-side in the trader PWA
+  (`frontend/src/app/utils/hsnMatch.js`, via `@xenova/transformers` on WASM
+  — this library's execution-provider list is WASM-only, `webgpu` is
+  present in the source but commented out of the active execution-provider
+  list in the installed 2.17.2, so the spec's "feature-detect WebGPU" didn't
+  have anything real to detect), matches
+  against a curated local index of ~540 HSN codes
+  (`frontend/public/hsn-index.json`, 1.82MB — built from live Supabase data
+  by `frontend/scripts/build-hsn-index.mjs`), and attaches the result as
+  extra `hsn_hint_code`/`hsn_hint_confidence` form fields the backend
+  doesn't read yet. Model: **`Xenova/all-MiniLM-L6-v2`, not
+  `multilingual-e5-small`** as specced — every genuinely multilingual
+  (Hindi-capable) embedding model in the Xenova org (`multilingual-e5-small`,
+  `paraphrase-multilingual-MiniLM-L12-v2`,
+  `distiluse-base-multilingual-cased-v2`) quantizes to 118-135MB because
+  Hindi support needs a ~250k-token XLM-R-style vocabulary, versus
+  MiniLM-L6's ~23MB — confirmed by checking actual `content-length` on the
+  ONNX files, not assumed. Real invoice/HSN text sampled from the live DB is
+  Latin-script English/Hinglish, not Devanagari, so this isn't a real
+  regression against the actual data. A second, more load-bearing deviation:
+  there is no on-device OCR in this app (OCV-3 was built as queue-and-defer,
+  not OCR triage — see its entry above), so the "extracted line-item
+  description" this feature was specced to embed doesn't exist client-side
+  before the backend's Gemini OCR call. The pre-upload pass instead embeds
+  the captured file's name (`fileNameToHSNQuery()` in `trader/page.js`) —
+  real signal when a trader uploads a descriptively-named photo/PDF, near-
+  certain no-op on a camera-default `IMG_2451.jpg`, which is fine: that's
+  the same low-confidence no-op path as any other miss. The match is raced
+  against an 800ms window (`HSN_MATCH_ATTACH_WINDOW_MS`) that can only make
+  it miss attaching to *this* upload, never delay it; the model+index are
+  pre-warmed on app mount (`prewarmHSNMatcher()`) so a same-session second
+  scan has a real chance of a warm hit. Shown as a small "On-device HSN
+  match: `<code>` (`<confidence>`%)" badge on the scan-result toast when
+  present. Unit-tested with Vitest against the pure cosine-similarity and
+  threshold-gating logic (`hsnMatch.test.js`) using small synthetic fixture
+  embeddings rather than the real ~23MB model, plus a test asserting the
+  safe no-op path when a required browser API (e.g. `window`, in the Node
+  test environment itself) isn't present.
+
 ---
 
 ## 3. What to actually build (priority order, given 30 hours and existing bug-fix backlog)
@@ -150,7 +195,7 @@ Be explicit about this distinction in the pitch: **Office Kit is a hackathon bui
 3. **OCV-2 (auto-crop)** — only if OCV-1 lands with room to spare; shares its scaffolding.
 4. **MDX-1 + MDX-2 (demo choreography)** — zero new code, pure rehearsal; do this regardless of how the build goes, since it costs nothing but planning time.
 5. **VOI-1 (voice queries)** — stretch goal, after 1–4 are solid.
-6. Everything else in the catalog (OCV-4, VOI-3, NPU-1) — **do not attempt live**. These are Grand Finale / post-event roadmap items. Naming them in the pitch as "what's next" costs nothing and signals technical range without the risk of a half-built feature failing on stage. (OCV-3 was later built post-event, with more time available than this list assumed — see its entry above.)
+6. Everything else in the catalog (OCV-4, VOI-3, NPU-1) — **do not attempt live**. These are Grand Finale / post-event roadmap items. Naming them in the pitch as "what's next" costs nothing and signals technical range without the risk of a half-built feature failing on stage. (OCV-3 and NPU-1 were later built post-event, with more time available than this list assumed — see their entries above.)
 
 Do not let `SCORE`-chasing crowd out the actual bug-fix backlog (§ below) — a product that's polished on telemetry but breaks when a judge asks for a real reconciled invoice loses more on the 70% jury-scored side than it gains on the 25% device-scored side.
 
