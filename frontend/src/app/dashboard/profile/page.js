@@ -18,6 +18,8 @@ import {
   Edit3,
   AlertTriangle,
   MessageCircle,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { useLanguage } from "../../context/LanguageContext";
 
@@ -79,6 +81,20 @@ export default function ProfilePage() {
       else alert("Failed to send reminder. Check client's phone number.");
     } catch (e) {
       alert("Failed to send reminder.");
+    }
+  };
+
+  const handleToggleComposition = async (traderId, current) => {
+    const next = !current;
+    setTraders((prev) => prev.map((t) => (t.id === traderId ? { ...t, is_composition: next } : t)));
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/dashboard/traders/${traderId}/composition`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_composition: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setTraders((prev) => prev.map((t) => (t.id === traderId ? { ...t, is_composition: current } : t)));
     }
   };
 
@@ -179,6 +195,7 @@ export default function ProfilePage() {
                       <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Business Name</th>
                       <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">GSTIN</th>
                       <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Phone</th>
+                      <th className="text-center px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Composition</th>
                       <th className="text-right px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Status</th>
                     </tr>
                   </thead>
@@ -197,6 +214,19 @@ export default function ProfilePage() {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-gray-600">{t.whatsapp_number || "—"}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => handleToggleComposition(t.id, t.is_composition)}
+                            className="flex items-center gap-1.5 mx-auto text-gray-600 hover:text-gray-900 transition-colors"
+                            title="Composition dealers can't claim ITC"
+                          >
+                            {t.is_composition ? (
+                              <ToggleRight size={20} className="text-[#10b981]" />
+                            ) : (
+                              <ToggleLeft size={20} className="text-gray-400" />
+                            )}
+                          </button>
+                        </td>
                         <td className="px-4 py-3 text-right">
                           {(t.open_issues || 0) > 0 ? (
                             <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">

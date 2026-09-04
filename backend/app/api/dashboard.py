@@ -9,6 +9,7 @@ import string
 from datetime import date
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from app.api.deps import verify_trader_access, get_current_trader_id, HTTPException
 from app.config import get_settings
 
@@ -286,12 +287,31 @@ async def list_traders(current_trader_id: str = Depends(get_current_trader_id)):
         phone_10 = phone[-10:] if len(phone) >= 10 else phone
         
         response = db.table("traders").select(
-            "id, name, business_name, gstin, whatsapp_number"
+            "id, name, business_name, gstin, whatsapp_number, is_composition"
         ).or_(f"id.eq.{current_trader_id},ca_whatsapp_number.eq.{phone_full},ca_whatsapp_number.eq.{phone_10}").execute()
-        
+
         return {"traders": response.data or []}
     except Exception as e:
         raise safe_http_error(logger, "Failed to list traders", e)
+
+
+class TraderCompositionModel(BaseModel):
+    is_composition: bool
+
+
+@router.patch("/traders/{trader_id}/composition")
+async def set_trader_composition(payload: TraderCompositionModel, trader_id: str = Depends(verify_trader_access)):
+    """Toggle whether a client is registered under the GST Composition Scheme.
+
+    Composition dealers cannot claim ITC at all, so this gates MoneyMeter's
+    display for that client. Set from the CA's profile/client-list page.
+    """
+    try:
+        db = get_supabase()
+        db.table("traders").update({"is_composition": payload.is_composition}).eq("id", trader_id).execute()
+        return {"trader_id": trader_id, "is_composition": payload.is_composition}
+    except Exception as e:
+        raise safe_http_error(logger, "Failed to update composition status", e)
 
 
 @router.get("/gstr2b-status/{trader_id}")
