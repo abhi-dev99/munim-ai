@@ -134,6 +134,8 @@ async def upload_invoice_direct(
             "diagnosis_en": diagnosis.diagnosis_en,
             "action_items": diagnosis.action_items,
             "processing_duration_ms": diagnosis.processing_duration_ms,
+            "supplier_name": inv_json.supplier_name if inv_json else None,
+            "line_item_descriptions": [li.description for li in inv_json.line_items if li.description] if inv_json else [],
         }
 
     except HTTPException:

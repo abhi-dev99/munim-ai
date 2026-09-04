@@ -3,10 +3,11 @@ import { authFetch } from "@/src/app/utils/api";
 import { assessPhotoQuality } from "@/src/app/utils/imageQuality";
 import { vibrateAlert, vibrateSuccess, vibrateWarning } from "@/src/app/utils/haptics";
 import { queueUpload, getQueuedUploads, removeQueuedUpload } from "@/src/app/utils/offlineQueue";
+import { matchHSN, prewarmHSNMatcher } from "@/src/app/utils/hsnMatch";
 
 
 import { useState, useEffect, useRef } from "react";
-import { Menu, Camera, FileText, CheckCircle2, ShieldAlert, CloudOff, X, Loader2, Home, BarChart2, ChevronRight, Upload } from "lucide-react";
+import { Menu, Camera, FileText, CheckCircle2, ShieldAlert, CloudOff, X, Loader2, Home, BarChart2, ChevronRight, Upload, Sparkles } from "lucide-react";
 import MoneyMeter from "../components/MoneyMeter";
 import ActionQueue from "../components/ActionQueue";
 import InvoiceDetailModal from "../components/InvoiceDetailModal";
@@ -30,6 +31,20 @@ const QUALITY_ANALYSIS_MAX_DIMENSION = 800;
 // OCR round trip; short enough that a truly stuck request still falls back
 // to the offline queue instead of leaving the trader staring at a spinner.
 const UPLOAD_TIMEOUT_MS = 30000;
+
+// There's no on-device OCR in this app (see OCV-3 in
+// IQOO_DEVICE_CAPABILITY_SPEC.md — deliberately not built), so there's no
+// line-item text available client-side before the backend extracts it. The
+// on-device HSN match therefore runs *after* the upload response comes
+// back, against the real `supplier_name`/`line_item_descriptions` Gemini
+// extracted — not before, and not against the file name. It's a display
+// enrichment on an already-successful scan, never something the upload
+// flow waits on.
+function hsnMatchQueryFrom(data) {
+  const items = (data.line_item_descriptions || []).join(", ");
+  if (items) return items;
+  return data.supplier_name || "";
+}
 
 /**
  * On-device blur/glare check: draws the captured file to an off-screen
@@ -137,6 +152,14 @@ export default function TraderApp() {
     else if (scanResult.status === "CONFIRMED") vibrateSuccess();
   }, [scanState, scanResult]);
 
+  // Warm the on-device HSN matcher (index + model download) as soon as the
+  // app is open, well before the trader taps "Scan Invoice" — by the time a
+  // scan actually completes (after the Gemini round trip) the model has had
+  // a real chance to finish loading instead of starting cold.
+  useEffect(() => {
+    prewarmHSNMatcher();
+  }, []);
+
   // Offline queue: drain whatever's pending as soon as the browser reports
   // a connection, plus once on mount in case items were queued in an
   // earlier session that's only now being reopened online. `online` is the
@@ -202,18 +225,34 @@ export default function TraderApp() {
   function applyUploadSuccess(data, forTraderId) {
     setScanState("success");
     setScanResult({
+      invoiceId: data.invoice_id,
       status: data.itc_verdict?.status || "PROCESSING",
       itc_amount: data.itc_verdict?.itc_amount || 0,
       message: data.diagnosis_hi || data.diagnosis_en || "Invoice processed!",
       // Hint the TTS voice picker toward Hindi only when we actually got
       // Hindi text back — otherwise fall back to English.
       lang: data.diagnosis_hi ? "hi-IN" : "en-IN",
+      hsnHint: null,
     });
     setTimeout(() => {
       setScanState("idle");
       setScanResult(null);
     }, 8000);
     if (forTraderId) refreshInvoiceHistory(forTraderId);
+
+    // Runs against the real extracted supplier/line-item text, once it
+    // actually exists — never against a guess made before the upload. Not
+    // awaited: this is a display enrichment on an already-successful scan,
+    // not something anything else waits on. Guarded by invoiceId so a match
+    // that resolves late can't stomp a *different*, newer scan result if
+    // the trader has already moved on to their next invoice.
+    const query = hsnMatchQueryFrom(data);
+    if (query) {
+      matchHSN(query).then((hint) => {
+        if (!hint) return;
+        setScanResult((prev) => (prev?.invoiceId === data.invoice_id ? { ...prev, hsnHint: hint } : prev));
+      });
+    }
   }
 
   async function queueForLater(file, forTraderId) {
@@ -469,6 +508,12 @@ export default function TraderApp() {
                 )}
                 <p className="text-xs text-[var(--text-secondary)] mt-1">{scanResult.message}</p>
                 <ListenButton text={scanResult.message} lang={scanResult.lang} className="mt-1.5" />
+                {scanResult.hsnHint && (
+                  <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)] mt-1.5">
+                    <Sparkles size={11} />
+                    On-device HSN match: {scanResult.hsnHint.hsn_code} ({Math.round(scanResult.hsnHint.confidence * 100)}%)
+                  </p>
+                )}
               </>
             )}
             {scanState === "error" && scanResult && (
@@ -612,7 +657,7 @@ export default function TraderApp() {
               </button>
               <button
                 onClick={() => {
-                  const file = retakePrompt.file;
+                  const { file } = retakePrompt;
                   setRetakePrompt(null);
                   handleInvoiceUpload(file);
                 }}
