@@ -23,7 +23,7 @@
 
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Platform, SafeAreaView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Platform, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 
 import {
@@ -51,7 +51,19 @@ import SteadyCameraCapture from './components/SteadyCameraCapture'
 // laptop, so leaving the default as-is will only ever work in an emulator.
 const TRADER_PWA_URL = process.env.EXPO_PUBLIC_TRADER_PWA_URL || 'http://localhost:3000/trader'
 
+// Both /trader (this trader's own view) and /dashboard (the CA's client
+// list) live on the same Next.js origin, so localStorage-based auth
+// (CLAUDE.md: JWT persists in localStorage across navigation) survives
+// switching between them in the same WebView -- one login, either view.
+// Derived rather than duplicated so EXPO_PUBLIC_TRADER_PWA_URL only has to
+// be set in one place; falls back to appending /dashboard if the env var
+// didn't end in /trader for some reason.
+const PWA_BASE_URL = TRADER_PWA_URL.replace(/\/trader\/?$/, '')
+const DASHBOARD_PWA_URL = `${PWA_BASE_URL}/dashboard`
+
 const PLATFORM: 'ios' | 'android' = Platform.OS === 'ios' ? 'ios' : 'android'
+
+type ViewMode = 'trader' | 'dashboard'
 
 export default function App() {
   const webviewRef = useRef<WebView>(null)
@@ -62,6 +74,24 @@ export default function App() {
   // Set while the web page has an in-flight MUNIM_CAPTURE_PHOTO_REQUEST —
   // shows the motion-gated camera screen full-screen over the WebView.
   const [captureRequestId, setCaptureRequestId] = useState<string | null>(null)
+  // Which of the two web app views the WebView currently points at. A full
+  // page load either way (not a client-side route change we can't trigger
+  // from outside the page), but the auth token is in localStorage on the
+  // shared origin so neither view needs a fresh login. Demo-day fix for a
+  // real gap: this shell previously hardcoded /trader only, so there was no
+  // way to show the CA's dashboard from the phone at all regardless of
+  // which number logged in.
+  const [viewMode, setViewMode] = useState<ViewMode>('trader')
+  // The page can navigate itself out from under viewMode (authFetch's own
+  // 401 handler sends any unauthenticated request to "/", and "/" redirects
+  // post-login) -- so tapping a tab has to force a fresh WebView every time,
+  // even a tap on the tab viewMode already says is active, or it can appear
+  // to do nothing if the page had already drifted somewhere else.
+  const [navNonce, setNavNonce] = useState(0)
+  const switchView = useCallback((mode: ViewMode) => {
+    setViewMode(mode)
+    setNavNonce((n) => n + 1)
+  }, [])
 
   // Keep the web page's window.MunimNative.getStatus()/onStatusChange() in
   // sync with the native model lifecycle, so the PWA can show its own
@@ -122,9 +152,28 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
+      <View style={styles.viewSwitcher}>
+        <Pressable
+          onPress={() => switchView('trader')}
+          style={[styles.viewSwitcherTab, viewMode === 'trader' && styles.viewSwitcherTabActive]}
+        >
+          <Text style={[styles.viewSwitcherText, viewMode === 'trader' && styles.viewSwitcherTextActive]}>
+            Trader
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => switchView('dashboard')}
+          style={[styles.viewSwitcherTab, viewMode === 'dashboard' && styles.viewSwitcherTabActive]}
+        >
+          <Text style={[styles.viewSwitcherText, viewMode === 'dashboard' && styles.viewSwitcherTextActive]}>
+            CA Dashboard
+          </Text>
+        </Pressable>
+      </View>
       <WebView
+        key={`${viewMode}-${navNonce}`}
         ref={webviewRef}
-        source={{ uri: TRADER_PWA_URL }}
+        source={{ uri: viewMode === 'trader' ? TRADER_PWA_URL : DASHBOARD_PWA_URL }}
         style={styles.webview}
         injectedJavaScriptBeforeContentLoaded={injectedJavaScriptBeforeContentLoaded}
         onMessage={onMessage}
@@ -183,6 +232,29 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
+  },
+  viewSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f0f0',
+    padding: 4,
+    gap: 4,
+  },
+  viewSwitcherTab: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  viewSwitcherTabActive: {
+    backgroundColor: '#000',
+  },
+  viewSwitcherText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  viewSwitcherTextActive: {
+    color: '#fff',
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFill,
