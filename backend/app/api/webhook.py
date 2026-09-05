@@ -613,6 +613,7 @@ async def handle_invoice_message(phone: str, msg: dict):
 
         # Send diagnosis to trader
         await whatsapp.send_text_message(phone, diagnosis.diagnosis_hi)
+        await _send_voice_note(phone, diagnosis.diagnosis_hi, trader.get("language_pref", "hi"))
 
         # Notify CA via Email
         settings = get_settings()
@@ -857,6 +858,25 @@ async def _process_registration_step(phone: str, text: str, trader: dict, state:
         }
         await whatsapp.send_text_message(phone, email_msgs.get(current_lang, email_msgs["hi"]))
 
+async def _send_voice_note(phone: str, text: str, language_pref: str) -> None:
+    """
+    Best-effort audio follow-up to an already-sent text reply, in the
+    trader's actual language -- gTTS (backend/app/services/tts.py) maps
+    language_pref directly to its language codes (hi/en/mr/gu all
+    supported). Never raises: a TTS/upload/send failure here must not take
+    down the text reply that already succeeded above it.
+    """
+    if not text:
+        return
+    try:
+        from app.services.tts import generate_and_upload_tts
+        audio_url = await generate_and_upload_tts(text, language_pref)
+        if audio_url:
+            await whatsapp.send_audio_message(phone, audio_url)
+    except Exception as e:
+        logger.warning(f"Voice-note generation/send failed (non-fatal): {e}")
+
+
 async def _answer_general_query(phone: str, text: str, trader: dict):
     from app.services.supabase_client import get_itc_summary, get_recent_invoices
     from app.services.gemini import answer_trader_question
@@ -871,6 +891,7 @@ async def _answer_general_query(phone: str, text: str, trader: dict):
     language_pref = trader.get("language_pref", "hi")
     answer = await answer_trader_question(text, context_data, language_pref)
     await whatsapp.send_text_message(phone, answer)
+    await _send_voice_note(phone, answer, language_pref)
 
 
 async def _send_itc_status(phone: str, trader: dict):
