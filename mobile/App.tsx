@@ -23,7 +23,7 @@
 
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Platform, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Animated, Platform, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 
 import {
@@ -192,12 +192,7 @@ export default function App() {
         domStorageEnabled
         originWhitelist={['*']}
         startInLoadingState
-        renderLoading={() => (
-          <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Loading Munim…</Text>
-          </View>
-        )}
+        renderLoading={() => <LoadingScreen />}
       />
       {captureRequestId ? (
         <View style={StyleSheet.absoluteFill}>
@@ -211,6 +206,70 @@ export default function App() {
       ) : null}
       {__DEV__ ? <ModelStatusPill status={modelStatus} backend={backendInfo} /> : null}
     </SafeAreaView>
+  )
+}
+
+// How long a load gets before the spinner escalates to a skeleton. Below
+// this, a plain spinner reads as "basically instant" -- swapping it for a
+// skeleton this early would just be visual noise for a load that was going
+// to finish before a human could really look at it. Past it, the load is
+// slow enough that a skeleton (something recognizable as "the dashboard is
+// nearly here") reduces perceived wait better than a spinner that gives no
+// sense of progress at all.
+const SKELETON_DELAY_MS = 600
+
+/**
+ * WebView's renderLoading, escalating from a spinner to a layout-shaped
+ * skeleton the longer a page load takes -- a fast/cached load (good network)
+ * never gets past the spinner; a slow one (poor network, cold Cloud Run
+ * instance) gets something that looks like progress instead of an
+ * indefinite spin. Remounts fresh on every WebView key change (App.tsx's
+ * viewMode/navNonce), so this always starts from "spinner" on a new load,
+ * never carries stale skeleton state from a previous one.
+ */
+function LoadingScreen() {
+  const [showSkeleton, setShowSkeleton] = useState(false)
+  const pulse = useRef(new Animated.Value(0.35)).current
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSkeleton(true), SKELETON_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!showSkeleton) return
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 650, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.35, duration: 650, useNativeDriver: true }),
+      ]),
+    )
+    loop.start()
+    return () => loop.stop()
+  }, [showSkeleton, pulse])
+
+  if (!showSkeleton) {
+    return (
+      <View style={styles.loadingOverlay}>
+        <ActivityIndicator size="large" />
+      </View>
+    )
+  }
+
+  return (
+    <View style={styles.skeletonScreen}>
+      <Animated.View style={[styles.skeletonHeaderBar, { opacity: pulse }]} />
+      <View style={styles.skeletonRow}>
+        <Animated.View style={[styles.skeletonCard, { opacity: pulse }]} />
+        <Animated.View style={[styles.skeletonCard, { opacity: pulse }]} />
+      </View>
+      <View style={styles.skeletonRow}>
+        <Animated.View style={[styles.skeletonCard, { opacity: pulse }]} />
+        <Animated.View style={[styles.skeletonCard, { opacity: pulse }]} />
+      </View>
+      <Animated.View style={[styles.skeletonBlock, { opacity: pulse }]} />
+      <Animated.View style={[styles.skeletonBlockShort, { opacity: pulse }]} />
+    </View>
   )
 }
 
@@ -295,9 +354,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#ffffff',
   },
-  loadingText: {
-    marginTop: 12,
-    color: '#444',
+  skeletonScreen: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#ffffff',
+    padding: 16,
+    paddingTop: 24,
+    gap: 12,
+  },
+  skeletonHeaderBar: {
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#e5e5e5',
+    marginBottom: 8,
+  },
+  skeletonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  skeletonCard: {
+    flex: 1,
+    height: 90,
+    borderRadius: 12,
+    backgroundColor: '#e5e5e5',
+  },
+  skeletonBlock: {
+    height: 140,
+    borderRadius: 12,
+    backgroundColor: '#e5e5e5',
+    marginTop: 8,
+  },
+  skeletonBlockShort: {
+    height: 70,
+    borderRadius: 12,
+    backgroundColor: '#e5e5e5',
   },
   devPanel: {
     position: 'absolute',
