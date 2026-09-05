@@ -19,6 +19,24 @@ function last10Digits(phone) {
   return digits.slice(-10);
 }
 
+// The /trader page is a mobile-first PWA experience (built for a phone-sized
+// WhatsApp-style flow) -- opening it in a laptop browser looks unfinished,
+// not "responsive." A trader's own account should still land on /dashboard
+// when accessed from a desktop rather than showing that mobile view full of
+// unused whitespace; /dashboard already handles a single trader with no CA
+// clients gracefully (backend/app/api/dashboard.py's /traders endpoint
+// returns just that trader's own row when there's nothing else to list), so
+// there's a real, working page to send desktop traders to instead. A CA's
+// own login already goes to /dashboard regardless of device -- unaffected.
+function isMobileDevice() {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent);
+}
+
+function destinationFor(isTraderRole) {
+  return isTraderRole && isMobileDevice() ? "/trader" : "/dashboard";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mobileNumber, setMobileNumber] = useState("");
@@ -36,7 +54,7 @@ export default function LoginPage() {
       // session from before this fix existed won't have it, so default to
       // the old always-/dashboard behavior rather than guessing.
       const role = localStorage.getItem("munim_auth_role");
-      router.push(role === "trader" ? "/trader" : "/dashboard");
+      router.push(destinationFor(role === "trader"));
     } else if (token && !trader) {
       // Orphaned token from a bad logout — clean it up
       localStorage.removeItem("munim_auth_token");
@@ -108,7 +126,7 @@ export default function LoginPage() {
       // else's ca_whatsapp_number -> it's the CA, route to /dashboard.
       const isOwnNumber = last10Digits(mobileNumber) === last10Digits(data.trader?.whatsapp_number);
       localStorage.setItem("munim_auth_role", isOwnNumber ? "trader" : "ca");
-      router.push(isOwnNumber ? "/trader" : "/dashboard");
+      router.push(destinationFor(isOwnNumber));
     } catch (err) {
       setError(err.message);
     } finally {
