@@ -36,6 +36,7 @@ import {
 } from './modules/bridge'
 import { getBackendInfo, loadModel, onModelProgress, type BackendInfo, type ModelProgress } from './modules/localLlm'
 import SteadyCameraCapture from './components/SteadyCameraCapture'
+import DeviceSensorsScreen from './components/DeviceSensorsScreen'
 
 // EXPO_PUBLIC_ vars are inlined at build time by Expo (no extra config
 // needed — see https://docs.expo.dev/guides/environment-variables/).
@@ -74,6 +75,10 @@ export default function App() {
   // Set while the web page has an in-flight MUNIM_CAPTURE_PHOTO_REQUEST —
   // shows the motion-gated camera screen full-screen over the WebView.
   const [captureRequestId, setCaptureRequestId] = useState<string | null>(null)
+  // Opens the honest sensor-diagnostics screen (see its own header comment
+  // for why this is a showcase, not a feature). Native-triggered only -- the
+  // web page has no way to open this and doesn't need one.
+  const [sensorsScreenOpen, setSensorsScreenOpen] = useState(false)
   // Which of the two web app views the WebView currently points at. A full
   // page load either way (not a client-side route change we can't trigger
   // from outside the page), but the auth token is in localStorage on the
@@ -170,6 +175,12 @@ export default function App() {
           </Text>
         </Pressable>
       </View>
+      {/* Sensors diagnostics entry point -- own workstream, deliberately kept
+          out of the view-switcher row above so it can't conflict with other
+          changes landing there in parallel. */}
+      <Pressable onPress={() => setSensorsScreenOpen(true)} style={styles.sensorsButton}>
+        <Text style={styles.sensorsButtonText}>Sensors</Text>
+      </Pressable>
       <WebView
         key={`${viewMode}-${navNonce}`}
         ref={webviewRef}
@@ -191,6 +202,11 @@ export default function App() {
       {captureRequestId ? (
         <View style={StyleSheet.absoluteFill}>
           <SteadyCameraCapture onCaptured={handleCaptured} onCancel={handleCaptureCancel} />
+        </View>
+      ) : null}
+      {sensorsScreenOpen ? (
+        <View style={StyleSheet.absoluteFill}>
+          <DeviceSensorsScreen onClose={() => setSensorsScreenOpen(false)} />
         </View>
       ) : null}
       {__DEV__ ? <ModelStatusPill status={modelStatus} backend={backendInfo} /> : null}
@@ -255,6 +271,23 @@ const styles = StyleSheet.create({
   },
   viewSwitcherTextActive: {
     color: '#fff',
+  },
+  // Sensors diagnostics entry point -- its own tiny floating pill, positioned
+  // just clear of the view-switcher row above rather than inside it.
+  sensorsButton: {
+    position: 'absolute',
+    top: 52,
+    right: 8,
+    zIndex: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+  },
+  sensorsButtonText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFill,
