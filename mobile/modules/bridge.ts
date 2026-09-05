@@ -29,12 +29,15 @@ import { explainVerdict, type Lang, type Verdict } from './localLlm'
 export type WebToNativeMessage =
   | { type: 'MUNIM_EXPLAIN_VERDICT_REQUEST'; requestId: string; verdict: Verdict; lang: Lang }
   | { type: 'MUNIM_CANCEL_REQUEST'; requestId: string }
+  | { type: 'MUNIM_CAPTURE_PHOTO_REQUEST'; requestId: string }
   | { type: 'MUNIM_BRIDGE_READY' }
 
 export type NativeToWebMessage =
   | { type: 'MUNIM_EXPLAIN_VERDICT_CHUNK'; requestId: string; token: string }
   | { type: 'MUNIM_EXPLAIN_VERDICT_DONE'; requestId: string; fullText: string }
   | { type: 'MUNIM_EXPLAIN_VERDICT_ERROR'; requestId: string; message: string }
+  | { type: 'MUNIM_CAPTURE_PHOTO_RESULT'; requestId: string; base64: string; mimeType: string }
+  | { type: 'MUNIM_CAPTURE_PHOTO_ERROR'; requestId: string; message: string }
   | {
       type: 'MUNIM_STATUS_EVENT'
       status: 'idle' | 'downloading' | 'loading' | 'ready' | 'error'
@@ -65,6 +68,28 @@ export function broadcastStatus(webview: WebView | null, event: StatusEvent): vo
   sendToWeb(webview, event)
 }
 
+// A capture request needs to show a full-screen native camera view, which
+// this module (plain functions, no React) can't render itself -- App.tsx
+// registers a handler here once on mount that shows/hides that screen, and
+// calls sendCapturePhotoResult/sendCapturePhotoError below once the screen
+// resolves.
+type CaptureRequestHandler = (requestId: string) => void
+let captureRequestHandler: CaptureRequestHandler | null = null
+
+export function setCaptureRequestHandler(handler: CaptureRequestHandler | null): void {
+  captureRequestHandler = handler
+}
+
+export function sendCapturePhotoResult(webview: WebView | null, requestId: string, base64: string, mimeType: string): void {
+  if (!webview) return
+  sendToWeb(webview, { type: 'MUNIM_CAPTURE_PHOTO_RESULT', requestId, base64, mimeType })
+}
+
+export function sendCapturePhotoError(webview: WebView | null, requestId: string, message: string): void {
+  if (!webview) return
+  sendToWeb(webview, { type: 'MUNIM_CAPTURE_PHOTO_ERROR', requestId, message })
+}
+
 export async function handleBridgeMessage(rawData: string, webview: WebView | null): Promise<void> {
   if (!webview) return
 
@@ -85,6 +110,15 @@ export async function handleBridgeMessage(rawData: string, webview: WebView | nu
   }
 
   if (message.type === 'MUNIM_BRIDGE_READY') {
+    return
+  }
+
+  if (message.type === 'MUNIM_CAPTURE_PHOTO_REQUEST') {
+    if (captureRequestHandler) {
+      captureRequestHandler(message.requestId)
+    } else {
+      sendCapturePhotoError(webview, message.requestId, 'Camera capture is not available right now.')
+    }
     return
   }
 
@@ -166,6 +200,12 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
     } else if (msg.type === 'MUNIM_EXPLAIN_VERDICT_ERROR') {
       handlers.onError && handlers.onError(msg.message);
       delete pending[msg.requestId];
+    } else if (msg.type === 'MUNIM_CAPTURE_PHOTO_RESULT') {
+      handlers.onCaptured && handlers.onCaptured(msg.base64, msg.mimeType);
+      delete pending[msg.requestId];
+    } else if (msg.type === 'MUNIM_CAPTURE_PHOTO_ERROR') {
+      handlers.onError && handlers.onError(msg.message);
+      delete pending[msg.requestId];
     }
   };
 
@@ -204,6 +244,18 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
     cancel: function (requestId) {
       send({ type: 'MUNIM_CANCEL_REQUEST', requestId: requestId });
       delete pending[requestId];
+    },
+
+    // Shows the native motion-gated camera screen. callbacks:
+    // { onCaptured(base64, mimeType), onError(message) }. The screen also
+    // has its own cancel (X) button, which arrives here as onError with a
+    // "cancelled" message rather than a separate callback -- one failure
+    // path for the web side to handle instead of two.
+    capturePhoto: function (callbacks) {
+      var requestId = genId();
+      pending[requestId] = callbacks || {};
+      send({ type: 'MUNIM_CAPTURE_PHOTO_REQUEST', requestId: requestId });
+      return requestId;
     },
   };
 

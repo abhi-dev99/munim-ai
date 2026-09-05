@@ -28,6 +28,12 @@
       "expo-dev-client",
       "expo-build-properties",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Munim needs the camera to scan invoices."
+        }
+      ],
+      [
         "llama.rn",
         {
           "enableEntitlements": true,
@@ -39,8 +45,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+        "projectId": "182a85fb-0866-4194-88db-fcc8bb232d12"
       }
-    }
+    },
+    "owner": "abhi-dev99"
   }
 }

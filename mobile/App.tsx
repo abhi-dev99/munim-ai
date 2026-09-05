@@ -22,12 +22,20 @@
  */
 
 import { StatusBar } from 'expo-status-bar'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Platform, SafeAreaView, StyleSheet, Text, View } from 'react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 
-import { broadcastStatus, getInjectedJavaScriptBeforeLoad, handleBridgeMessage } from './modules/bridge'
-import { explainVerdict, loadModel, onModelProgress, type ModelProgress } from './modules/localLlm'
+import {
+  broadcastStatus,
+  getInjectedJavaScriptBeforeLoad,
+  handleBridgeMessage,
+  sendCapturePhotoError,
+  sendCapturePhotoResult,
+  setCaptureRequestHandler,
+} from './modules/bridge'
+import { getBackendInfo, loadModel, onModelProgress, type BackendInfo, type ModelProgress } from './modules/localLlm'
+import SteadyCameraCapture from './components/SteadyCameraCapture'
 
 // EXPO_PUBLIC_ vars are inlined at build time by Expo (no extra config
 // needed — see https://docs.expo.dev/guides/environment-variables/).
@@ -48,6 +56,12 @@ const PLATFORM: 'ios' | 'android' = Platform.OS === 'ios' ? 'ios' : 'android'
 export default function App() {
   const webviewRef = useRef<WebView>(null)
   const [modelStatus, setModelStatus] = useState<ModelProgress>({ status: 'idle' })
+  // Populated once loadModel() actually resolves — real backend info (e.g.
+  // devices: ["HTP0"] for the Hexagon NPU), never fabricated.
+  const [backendInfo, setBackendInfo] = useState<BackendInfo | null>(null)
+  // Set while the web page has an in-flight MUNIM_CAPTURE_PHOTO_REQUEST —
+  // shows the motion-gated camera screen full-screen over the WebView.
+  const [captureRequestId, setCaptureRequestId] = useState<string | null>(null)
 
   // Keep the web page's window.MunimNative.getStatus()/onStatusChange() in
   // sync with the native model lifecycle, so the PWA can show its own
@@ -73,6 +87,36 @@ export default function App() {
     handleBridgeMessage(event.nativeEvent.data, webviewRef.current)
   }, [])
 
+  useEffect(() => {
+    setCaptureRequestHandler((requestId) => setCaptureRequestId(requestId))
+    return () => setCaptureRequestHandler(null)
+  }, [])
+
+  const handleCaptured = useCallback((base64: string, mimeType: string) => {
+    if (captureRequestId) sendCapturePhotoResult(webviewRef.current, captureRequestId, base64, mimeType)
+    setCaptureRequestId(null)
+  }, [captureRequestId])
+
+  const handleCaptureCancel = useCallback(() => {
+    if (captureRequestId) sendCapturePhotoError(webviewRef.current, captureRequestId, 'cancelled')
+    setCaptureRequestId(null)
+  }, [captureRequestId])
+
+  // Prewarm: start the model download/load as soon as the app opens rather
+  // than waiting for the trader's first scan to result in an explainVerdict
+  // bridge request — same rationale as the frontend's prewarmHSNMatcher().
+  useEffect(() => {
+    const unsubscribe = onModelProgress(forwardStatus)
+    loadModel()
+      .then(() => setBackendInfo(getBackendInfo()))
+      .catch(() => {
+        // Surfaced via forwardStatus's 'error' status already; the web page
+        // (and the real scan flow) fall back to the backend Gemini diagnosis
+        // when window.MunimNative isn't ready, so nothing further to do here.
+      })
+    return unsubscribe
+  }, [forwardStatus])
+
   const injectedJavaScriptBeforeContentLoaded = getInjectedJavaScriptBeforeLoad(PLATFORM)
 
   return (
@@ -95,57 +139,41 @@ export default function App() {
           </View>
         )}
       />
-      {__DEV__ ? <DevPanel onTestModel={() => runDevModelTest(forwardStatus)} status={modelStatus} /> : null}
+      {captureRequestId ? (
+        <View style={StyleSheet.absoluteFill}>
+          <SteadyCameraCapture onCaptured={handleCaptured} onCancel={handleCaptureCancel} />
+        </View>
+      ) : null}
+      {__DEV__ ? <ModelStatusPill status={modelStatus} backend={backendInfo} /> : null}
     </SafeAreaView>
   )
 }
 
 /**
- * Dev-only affordance (stripped from release builds via __DEV__) to
- * exercise modules/localLlm.ts directly from the native shell, without
- * needing the PWA to send a bridge request. Useful for confirming the
- * model downloads/loads/streams correctly on a real device independent of
- * whatever the frontend has or hasn't wired up yet.
+ * Dev-only, real-data status indicator (stripped from release builds via
+ * __DEV__): shows the actual local-model lifecycle (download progress, then
+ * which backend it loaded on) as it happens from the prewarm above — never
+ * a manually-triggered fake narration. Real scan narration now happens via
+ * the bridge, driven by frontend/src/app/trader/page.js.
  */
-function DevPanel({ onTestModel, status }: { onTestModel: () => void; status: ModelProgress }) {
+function ModelStatusPill({ status, backend }: { status: ModelProgress; backend: BackendInfo | null }) {
+  const backendLabel = backend
+    ? backend.devices && backend.devices.length > 0
+      ? backend.devices.join(', ')
+      : backend.gpu
+        ? 'GPU (unnamed device)'
+        : 'CPU'
+    : null
+
   return (
-    <View style={styles.devPanel} pointerEvents="box-none">
-      <Text onPress={onTestModel} style={styles.devButton}>
-        🧪 Test local model ({status.status}
-        {status.fraction !== undefined ? ` ${Math.round(status.fraction * 100)}%` : ''})
+    <View style={styles.devPanel} pointerEvents="none">
+      <Text style={styles.devButton}>
+        Local model: {status.status}
+        {status.fraction !== undefined ? ` ${Math.round(status.fraction * 100)}%` : ''}
+        {backendLabel ? ` (${backendLabel})` : ''}
       </Text>
     </View>
   )
-}
-
-async function runDevModelTest(forwardStatus: (p: ModelProgress) => void) {
-  const unsubscribe = onModelProgress(forwardStatus)
-  try {
-    await loadModel()
-    const sampleVerdict = {
-      status: 'FIXABLE_BLOCKED',
-      itc_amount: 0,
-      itc_blocked: 4500,
-      blocked_reason: 'Supplier GSTIN not found in GSTR-2B for this period',
-      fix_action: 'Ask supplier to file GSTR-1 for this month',
-      supplier_name: 'Sharma Traders',
-      invoice_number: 'INV-2026-0417',
-      total_amount: 26500,
-    }
-    let out = ''
-    for await (const token of explainVerdict(sampleVerdict, 'hi')) {
-      out += token
-      // eslint-disable-next-line no-console
-      console.log('[localLlm dev test] streaming:', out)
-    }
-    // eslint-disable-next-line no-console
-    console.log('[localLlm dev test] final:', out)
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[localLlm dev test] failed:', err)
-  } finally {
-    unsubscribe()
-  }
 }
 
 const styles = StyleSheet.create({

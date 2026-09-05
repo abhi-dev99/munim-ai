@@ -81,6 +81,19 @@ window.MunimNative: {
   // Subscribe to model status changes (download progress, ready, error).
   // Returns an unsubscribe function.
   onStatusChange(fn: (event: StatusEvent) => void): () => void;
+
+  // Opens the native motion-gated camera screen full-screen (see
+  // mobile/components/SteadyCameraCapture.tsx) and resolves once a photo is
+  // taken or the trader cancels. Replaces the plain `<input type="file"
+  // capture="environment">` OS-camera-handoff for the native shell only —
+  // that file input still exists and still works unmodified in a plain
+  // browser, where window.MunimNative doesn't exist at all.
+  capturePhoto(callbacks: CaptureCallbacks): string;
+};
+
+type CaptureCallbacks = {
+  onCaptured?: (base64: string, mimeType: string) => void; // one JPEG frame, gated on device motion being still
+  onError?: (message: string) => void; // fires with message "cancelled" if the trader closes the screen without capturing
 };
 
 type StatusEvent = {
@@ -124,6 +137,7 @@ received by `<WebView onMessage>` in `mobile/App.tsx`, routed by
 |---|---|---|
 | `MUNIM_EXPLAIN_VERDICT_REQUEST` | `requestId: string`, `verdict: Verdict`, `lang: 'hi' \| 'en'` | Start narrating this verdict on-device. |
 | `MUNIM_CANCEL_REQUEST` | `requestId: string` | Stop the in-flight generation. |
+| `MUNIM_CAPTURE_PHOTO_REQUEST` | `requestId: string` | Show the motion-gated camera screen. |
 | `MUNIM_BRIDGE_READY` | — | Sent once, automatically, when the injected script finishes setting up `window.MunimNative`. Informational only — native doesn't need to act on it, but it's useful to log. |
 
 ### Native → Web
@@ -138,6 +152,8 @@ listeners).
 | `MUNIM_EXPLAIN_VERDICT_CHUNK` | `requestId`, `token: string` | One streamed token. Fires `onToken`. |
 | `MUNIM_EXPLAIN_VERDICT_DONE` | `requestId`, `fullText: string` | Generation finished. Fires `onDone`, then the request is cleaned up. |
 | `MUNIM_EXPLAIN_VERDICT_ERROR` | `requestId`, `message: string` | Generation failed (model load failure, download failure, llama.rn error). Fires `onError`, then cleaned up. |
+| `MUNIM_CAPTURE_PHOTO_RESULT` | `requestId`, `base64: string`, `mimeType: string` | A photo was captured. Fires `onCaptured`, then cleaned up. |
+| `MUNIM_CAPTURE_PHOTO_ERROR` | `requestId`, `message: string` | Trader cancelled (`message: "cancelled"`) or the camera/permission failed. Fires `onError`, then cleaned up. |
 | `MUNIM_STATUS_EVENT` | `status`, `progress?`, `message?` | Model lifecycle: `idle → downloading → loading → ready`, or `error` at any point. Fires every subscribed `onStatusChange` listener and updates the value `getStatus()` resolves. |
 
 `__munimNativeDispatch` is not meant to be called directly by page code —

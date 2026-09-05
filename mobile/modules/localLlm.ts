@@ -129,7 +129,11 @@ export function onModelProgress(listener: ProgressListener): () => void {
 // --- Download + load -------------------------------------------------------
 
 export async function isModelDownloaded(): Promise<boolean> {
-  return modelFile.exists && modelFile.size >= MIN_VALID_MODEL_BYTES
+  // Must match the full expected size, not just clear a low safety floor --
+  // a download aborted partway (e.g. an app reload mid-fetch) can easily
+  // land well past MIN_VALID_MODEL_BYTES while still being a truncated GGUF
+  // that llama.cpp fails to parse with an opaque "Failed to load model".
+  return modelFile.exists && modelFile.size >= MODEL_SIZE_BYTES
 }
 
 async function downloadModel(): Promise<void> {
@@ -182,22 +186,47 @@ export async function loadModel(): Promise<void> {
   loadingPromise = (async () => {
     try {
       await downloadModel()
+      // eslint-disable-next-line no-console
+      console.log('[localLlm] model file before init:', {
+        uri: modelFile.uri,
+        exists: modelFile.exists,
+        size: modelFile.exists ? modelFile.size : 0,
+        expectedSize: MODEL_SIZE_BYTES,
+      })
 
       emitProgress({ status: 'loading', message: 'Initializing model context' })
       context = await initLlama({
         model: modelFile.uri,
         n_ctx: 2048,
-        // Offload up to 99 layers to GPU (Adreno/OpenCL) when the device
-        // supports it; llama.rn/llama.cpp fall back to CPU automatically
-        // and expose the actual outcome on context.gpu / reasonNoGPU.
+        // Force the Hexagon NPU specifically (confirmed present on this
+        // device: a baseline run without this override already reported
+        // devices: ["GPUOpenCL", "HTP0".."HTP5"], gpu: true — this pins
+        // execution to HTP0 alone so a real run proves NPU-only inference
+        // rather than "NPU was merely available but GPU did the work". The
+        // actual outcome is on context.gpu / context.devices /
+        // context.reasonNoGPU, logged below.
+        devices: ['HTP0'],
         n_gpu_layers: 99,
         // Avoid mlock — loaner-device RAM headroom is unknown, and locking
         // ~800MB of a 1B model's weights in RAM is an easy way to get the
         // whole app OOM-killed on a mid-range phone.
         use_mlock: false,
       })
+      // eslint-disable-next-line no-console
+      console.log('[localLlm] backend after init:', {
+        gpu: context.gpu,
+        devices: context.devices,
+        reasonNoGPU: context.reasonNoGPU,
+      })
       emitProgress({ status: 'ready' })
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log('[localLlm] init threw:', {
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        modelFileExists: modelFile.exists,
+        modelFileSize: modelFile.exists ? modelFile.size : 0,
+      })
       emitProgress({ status: 'error', message: err instanceof Error ? err.message : String(err) })
       throw err
     }
@@ -210,6 +239,19 @@ export async function loadModel(): Promise<void> {
 
 export function isModelLoaded(): boolean {
   return context !== null
+}
+
+export type BackendInfo = { gpu: boolean; devices?: string[]; reasonNoGPU: string }
+
+/**
+ * Which backend the loaded context actually ran on (e.g. devices: ["HTP0"]
+ * for the Hexagon NPU vs ["GPUOpenCL"] for the Adreno GPU vs unset/empty for
+ * CPU) — surfaced so the UI can show real proof of hardware acceleration
+ * instead of that only existing in a laptop's Metro log.
+ */
+export function getBackendInfo(): BackendInfo | null {
+  if (!context) return null
+  return { gpu: context.gpu, devices: context.devices, reasonNoGPU: context.reasonNoGPU }
 }
 
 export async function unloadModel(): Promise<void> {
