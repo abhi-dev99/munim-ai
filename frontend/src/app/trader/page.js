@@ -195,10 +195,19 @@ export default function TraderApp() {
   // The actual network call, shared by a live upload and a drained queue
   // item so both go through identical request-building and response
   // handling — no second copy of this logic to drift out of sync.
-  async function uploadInvoiceFile(file, fileName, forTraderId) {
+  // `options.latitude`/`options.longitude` are the coarse GPS tag from the
+  // native shell's capturePhoto bridge (mobile/BRIDGE.md) — omitted
+  // entirely (not sent as blank strings) whenever a scan has no location,
+  // which is still the common case (plain browser, permission denied, no
+  // fix in time).
+  async function uploadInvoiceFile(file, fileName, forTraderId, options = {}) {
     const formData = new FormData();
     formData.append("file", file, fileName);
     formData.append("trader_id", forTraderId);
+    if (options.latitude !== undefined && options.longitude !== undefined) {
+      formData.append("latitude", options.latitude);
+      formData.append("longitude", options.longitude);
+    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
@@ -223,10 +232,11 @@ export default function TraderApp() {
   // a closure over `traderId` captured there would stay frozen at its
   // mount-time value (null) for the lifetime of the listener.
   function applyUploadSuccess(data, forTraderId) {
+    const status = data.itc_verdict?.status || "PROCESSING";
     setScanState("success");
     setScanResult({
       invoiceId: data.invoice_id,
-      status: data.itc_verdict?.status || "PROCESSING",
+      status,
       itc_amount: data.itc_verdict?.itc_amount || 0,
       message: data.diagnosis_hi || data.diagnosis_en || "Invoice processed!",
       // Hint the TTS voice picker toward Hindi only when we actually got
@@ -234,11 +244,27 @@ export default function TraderApp() {
       lang: data.diagnosis_hi ? "hi-IN" : "en-IN",
       hsnHint: null,
       onDevice: false,
+      // Soft geographic signal (backend/app/api/webhook.py) — this trader's
+      // own scan history says this one is unusually far away. Kept out of
+      // `message` on purpose: that string also feeds ListenButton's TTS, and
+      // this note is English regardless of which language diagnosis_hi/en
+      // came back in. Never proof of anything, same honesty standard as the
+      // rest of the fraud engine — just a distance a CA can choose to look at.
+      locationNote: data.location_signal?.anomaly
+        ? `Scanned ~${data.location_signal.distance_from_usual_km}km from where you usually scan.`
+        : null,
     });
-    setTimeout(() => {
-      setScanState("idle");
-      setScanResult(null);
-    }, 8000);
+    // A FRAUD_FLAGGED toast has to stay up until the trader deliberately
+    // dismisses it (see dismissScanToast's biometric gate below) — silently
+    // auto-clearing it on this timer would let the exact alert-fatigue
+    // click-through that gate exists to prevent happen automatically
+    // instead of by tapping X.
+    if (status !== "FRAUD_FLAGGED") {
+      setTimeout(() => {
+        setScanState("idle");
+        setScanResult(null);
+      }, 8000);
+    }
     if (forTraderId) refreshInvoiceHistory(forTraderId);
 
     // Runs against the real extracted supplier/line-item text, once it
@@ -295,8 +321,8 @@ export default function TraderApp() {
     });
   }
 
-  async function queueForLater(file, forTraderId) {
-    await queueUpload(file, { trader_id: forTraderId });
+  async function queueForLater(file, forTraderId, options = {}) {
+    await queueUpload(file, { trader_id: forTraderId, ...options });
     await refreshQueuedCount();
     setScanState("queued");
     setScanResult({
@@ -308,7 +334,7 @@ export default function TraderApp() {
     }, 8000);
   }
 
-  async function handleInvoiceUpload(file) {
+  async function handleInvoiceUpload(file, options = {}) {
     if (!file || !traderId || traderId === "demo") {
       setScanState("error");
       setScanResult({ message: "No active trader. Please set up your GSTIN first." });
@@ -316,7 +342,7 @@ export default function TraderApp() {
     }
 
     if (!navigator.onLine) {
-      await queueForLater(file, traderId);
+      await queueForLater(file, traderId, options);
       return;
     }
 
@@ -324,7 +350,7 @@ export default function TraderApp() {
     setScanResult(null);
 
     try {
-      const { ok, data } = await uploadInvoiceFile(file, file.name, traderId);
+      const { ok, data } = await uploadInvoiceFile(file, file.name, traderId, options);
       if (ok) {
         applyUploadSuccess(data, traderId);
       } else {
@@ -335,7 +361,7 @@ export default function TraderApp() {
       // Network error or the UPLOAD_TIMEOUT_MS abort firing — either way the
       // photo isn't lost, it goes in the same offline queue a detected
       // navigator.onLine===false would have used.
-      await queueForLater(file, traderId);
+      await queueForLater(file, traderId, options);
     }
   }
 
@@ -353,7 +379,11 @@ export default function TraderApp() {
       for (const item of queued) {
         if (!navigator.onLine) break;
         try {
-          const { ok, data } = await uploadInvoiceFile(item.file, item.fileName, item.metadata.trader_id);
+          // item.metadata already holds whatever options queueForLater
+          // stashed alongside trader_id (e.g. latitude/longitude) — passing
+          // it straight through as options is exactly what uploadInvoiceFile
+          // expects, no separate shape to keep in sync.
+          const { ok, data } = await uploadInvoiceFile(item.file, item.fileName, item.metadata.trader_id, item.metadata);
           await removeQueuedUpload(item.id);
           if (ok) {
             applyUploadSuccess(data, item.metadata.trader_id);
@@ -382,8 +412,13 @@ export default function TraderApp() {
   function triggerScan() {
     if (typeof window !== "undefined" && window.MunimNative?.isAvailable) {
       window.MunimNative.capturePhoto({
-        onCaptured: (base64, mimeType) => {
-          handleFileSelected(base64ToFile(base64, mimeType, `invoice_${Date.now()}.jpg`));
+        // latitude/longitude are only present when the native shell's best-
+        // effort GPS fix (mobile/components/SteadyCameraCapture.tsx) actually
+        // resolved — undefined otherwise, so `options` ends up `{}` exactly
+        // like every non-native capture path.
+        onCaptured: (base64, mimeType, latitude, longitude) => {
+          const options = latitude !== undefined && longitude !== undefined ? { latitude, longitude } : {};
+          handleFileSelected(base64ToFile(base64, mimeType, `invoice_${Date.now()}.jpg`), options);
         },
         onError: (message) => {
           if (message !== "cancelled") fileInputRef.current?.click();
@@ -409,7 +444,7 @@ export default function TraderApp() {
   // can always choose "Upload Anyway", since some real invoices are
   // genuinely hard to photograph cleanly and a false positive shouldn't
   // trap them.
-  async function handleFileSelected(file) {
+  async function handleFileSelected(file, options = {}) {
     if (!file) return;
 
     setCheckingPhoto(true);
@@ -417,11 +452,47 @@ export default function TraderApp() {
     setCheckingPhoto(false);
 
     if (verdict && !verdict.isAcceptable) {
-      setRetakePrompt({ file, verdict });
+      setRetakePrompt({ file, verdict, options });
       return;
     }
 
-    handleInvoiceUpload(file);
+    handleInvoiceUpload(file, options);
+  }
+
+  // Clears the scan-result toast — the X button's only job, except for a
+  // FRAUD_FLAGGED result, which is gated behind a biometric prompt first.
+  // A trader tapping through a fraud alert without a deliberate confirm is
+  // exactly the alert-fatigue click-through that undermines the statistical
+  // fraud detection this app runs (Benford's Law, sequential-invoice and
+  // velocity checks nobody does manually at a low-cost retainer — see
+  // CLAUDE.md's differentiator #2); the native shell's fingerprint/Face ID
+  // gate (mobile/modules/bridge.ts, `window.MunimNative.confirmBiometric`)
+  // turns "saw it, clicked X" into something a bit more deliberate and
+  // auditable. This can NEVER become a hard block, though: a plain browser
+  // (no window.MunimNative at all) or a phone with no biometric hardware/
+  // enrollment set up falls straight back to the old immediate-dismiss
+  // behavior — see BRIDGE.md's "not_available" reason for why that check
+  // has to happen after calling confirmBiometric, not before.
+  function dismissScanToast() {
+    const clear = () => { setScanState("idle"); setScanResult(null); };
+
+    const confirmBiometric = typeof window !== "undefined" ? window.MunimNative?.confirmBiometric : undefined;
+    if (scanResult?.status !== "FRAUD_FLAGGED" || typeof confirmBiometric !== "function") {
+      clear();
+      return;
+    }
+
+    confirmBiometric({
+      onResult: (success, reason) => {
+        // "not_available" means this device can't run the gate at all (no
+        // sensor, or nothing enrolled) — never strand the trader behind a
+        // prompt their phone can't show.
+        if (success || reason === "not_available") clear();
+        // Otherwise (cancelled, wrong finger, lockout...) leave the alert
+        // open so the trader can look again or retry.
+      },
+      onError: () => clear(), // bridge/native failure, not a declined prompt — same fallback as "not_available"
+    });
   }
 
   const statusColors = {
@@ -573,6 +644,9 @@ export default function TraderApp() {
                   <p className="text-xs font-bold text-black">ITC: ₹{scanResult.itc_amount.toLocaleString("en-IN")}</p>
                 )}
                 <p className="text-xs text-[var(--text-secondary)] mt-1">{scanResult.message}</p>
+                {scanResult.locationNote && (
+                  <p className="text-xs text-[var(--orange-primary)] mt-1">{scanResult.locationNote}</p>
+                )}
                 <ListenButton text={scanResult.message} lang={scanResult.lang} className="mt-1.5" />
                 {scanResult.onDevice && (
                   <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-emerald-600 mt-1.5">
@@ -600,7 +674,7 @@ export default function TraderApp() {
             )}
           </div>
           {scanState !== "uploading" && (
-            <button onClick={() => { setScanState("idle"); setScanResult(null); }}>
+            <button onClick={dismissScanToast}>
               <X size={16} className="text-[var(--text-muted)]" />
             </button>
           )}
@@ -729,9 +803,9 @@ export default function TraderApp() {
               </button>
               <button
                 onClick={() => {
-                  const { file } = retakePrompt;
+                  const { file, options } = retakePrompt;
                   setRetakePrompt(null);
-                  handleInvoiceUpload(file);
+                  handleInvoiceUpload(file, options);
                 }}
                 className="w-full py-3 rounded-none border border-[var(--border-subtle)] text-[var(--text-secondary)] font-bold text-sm hover:bg-[var(--bg-primary)] transition-colors"
               >

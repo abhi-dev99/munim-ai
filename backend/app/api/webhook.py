@@ -3,9 +3,11 @@ Munim.ai — WhatsApp Webhook API
 Receives Meta webhook events and dispatches invoice processing.
 """
 
+import math
 import re
 import logging
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Request, Response, HTTPException, UploadFile, File, Form, Depends
 import asyncio
@@ -29,6 +31,7 @@ from app.services.supabase_client import (
     update_trader,
     upload_file,
     store_invoice,
+    get_recent_invoice_locations,
 )
 from app.services.gstin import is_valid_gstin_format
 from app.agents.invoice_agent import process_invoice
@@ -48,16 +51,74 @@ GSTIN_REGEX = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]$")
 # First message from a QR scan of a CA's onboarding link (wa.me/...?text=JOIN-<short_code>)
 JOIN_CODE_REGEX = re.compile(r"^JOIN-([A-Za-z0-9]+)$", re.IGNORECASE)
 
+# --- Scan-location anomaly (soft signal, not a fraud score input) ----------
+#
+# The same statistical-signal philosophy as app/domain/fraud.py's six
+# signals (real math, no LLM, no invented judgment) but kept out of
+# FraudScorer on purpose: FraudScorer.WEIGHTS "must sum to 100", and this
+# needs this trader's *own* invoice history including the row that was just
+# inserted, which fraud.py's signals never touch. A soft distance-from-usual
+# number, not a score, so it doesn't imply more precision than a first-pass
+# guess deserves.
+#
+# 50km and "3 prior scans" are first-pass guesses (small Indian towns/cities,
+# not continent-scale), same as SteadyCameraCapture.tsx's motion thresholds —
+# the first things to tune against real usage, not a measured calibration.
+LOCATION_ANOMALY_THRESHOLD_KM = 50.0
+LOCATION_ANOMALY_MIN_PRIOR_SCANS = 3
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two lat/lon points, in kilometers."""
+    r = 6371.0  # mean Earth radius, km
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+async def _check_location_anomaly(
+    trader_id: str, latitude: float, longitude: float, exclude_invoice_id: Optional[str]
+) -> Optional[dict]:
+    """
+    Is this scan unusually far from where this trader's recent scans have
+    come from? Compares against the plain centroid of their last (up to) 20
+    geotagged invoices — deliberately simple, deliberately not a fraud
+    verdict. Returns None (no signal at all) rather than a low-confidence
+    guess when there isn't enough history yet to mean anything.
+    """
+    prior = await get_recent_invoice_locations(trader_id, limit=20, exclude_invoice_id=exclude_invoice_id)
+    if len(prior) < LOCATION_ANOMALY_MIN_PRIOR_SCANS:
+        return None
+
+    centroid_lat = sum(r["latitude"] for r in prior) / len(prior)
+    centroid_lon = sum(r["longitude"] for r in prior) / len(prior)
+    distance_km = _haversine_km(latitude, longitude, centroid_lat, centroid_lon)
+
+    return {
+        "distance_from_usual_km": round(distance_km, 1),
+        "prior_scan_count": len(prior),
+        "anomaly": distance_km > LOCATION_ANOMALY_THRESHOLD_KM,
+        "threshold_km": LOCATION_ANOMALY_THRESHOLD_KM,
+    }
+
 
 @router.post("/webhook/upload-invoice")
 async def upload_invoice_direct(
     file: UploadFile = File(...),
     trader_id: str = Form(...),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
     current_trader_id: str = Depends(get_current_trader_id),
 ):
     """
     Direct invoice upload from the Trader PWA (no WhatsApp).
     Accepts image or PDF, runs the full LangGraph pipeline, returns diagnosis.
+
+    latitude/longitude are optional — set only when the native shell
+    (mobile/) captured the photo and a GPS fix was available (mobile/
+    BRIDGE.md). Absent for every plain-browser upload, exactly as before.
     """
     # Reuse the same CA-on-behalf-of-client check every other trader-scoped
     # endpoint uses (deps.py:verify_trader_access) instead of a raw equality
@@ -117,12 +178,32 @@ async def upload_invoice_direct(
             invoice_data["igst_amount"] = sum((li.igst_amount or 0) for li in inv_json.line_items)
         if diagnosis.fraud_result:
             invoice_data["fraud_score"] = diagnosis.fraud_result.total_score
+        # Only set when the native shell actually sent a fix -- omitted
+        # entirely otherwise, same as every other conditional field above.
+        # Until backend/migrations/add_invoice_geolocation.sql is applied by
+        # hand (see that file), a scan that *does* include one will fail to
+        # store here and store_invoice() will log-and-return None like any
+        # other schema-drift write -- the same landmine CLAUDE.md documents
+        # for gstr2b_records.record_type, not a new failure mode.
+        if latitude is not None and longitude is not None:
+            invoice_data["latitude"] = latitude
+            invoice_data["longitude"] = longitude
         stored_invoice = await store_invoice(invoice_data)
 
         # Store line items
         if stored_invoice and inv_json and inv_json.line_items:
             from app.services.supabase_client import store_invoice_line_items
             await store_invoice_line_items(stored_invoice["id"], inv_json.line_items, diagnosis.hsn_validations)
+
+        # Soft geographic signal -- see _check_location_anomaly's comment.
+        # Always present in the response (None when there's no location or
+        # not enough scan history yet) rather than an occasionally-missing
+        # key, so the frontend can check it with one optional-chain read.
+        location_signal = None
+        if latitude is not None and longitude is not None:
+            location_signal = await _check_location_anomaly(
+                trader_id, latitude, longitude, exclude_invoice_id=stored_invoice["id"] if stored_invoice else None
+            )
 
         return {
             "status": "processed",
@@ -140,6 +221,7 @@ async def upload_invoice_direct(
             "processing_duration_ms": diagnosis.processing_duration_ms,
             "supplier_name": inv_json.supplier_name if inv_json else None,
             "line_item_descriptions": [li.description for li in inv_json.line_items if li.description] if inv_json else [],
+            "location_signal": location_signal,
         }
 
     except HTTPException:
