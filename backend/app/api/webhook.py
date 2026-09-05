@@ -468,8 +468,17 @@ async def handle_voice_message(phone: str, msg: dict):
         await whatsapp.send_text_message(phone, "Aapki aawaz samajh nahi aayi.")
         return
 
-    # 3. Send transcribed text to general query handler
-    trader = await get_trader_by_phone(phone)
+    # 3. Send transcribed text to general query handler. _answer_general_query
+    # itself is exception-safe (always sends something), but the trader
+    # lookup right before it isn't -- guard it too so a Supabase hiccup here
+    # still gets the trader a reply instead of dead silence.
+    try:
+        trader = await get_trader_by_phone(phone)
+    except Exception as e:
+        logger.error(f"get_trader_by_phone failed for {phone}: {e}")
+        await whatsapp.send_text_message(phone, "Kuch dikkat aa gayi. Kripya dubara try karein.")
+        return
+
     if trader:
         await _answer_general_query(phone, transcribed_text, trader, is_voice_query=True)
     else:
@@ -876,38 +885,64 @@ async def _send_voice_note(phone: str, text: str, language_pref: str) -> None:
         logger.warning(f"Voice-note generation/send failed (non-fatal): {e}")
 
 
+_GENERAL_QUERY_FAILURE_MSGS = {
+    "hi": "⚠️ Abhi answer nahi de paaya, ek dikkat aa gayi. Kripya thodi der baad dubara try karein.",
+    "en": "⚠️ Couldn't answer that just now — something went wrong on my end. Please try again in a moment.",
+    "mr": "⚠️ Abhi uttar deu shaklo nahi, kahitari adchan ali. Thoda velane punha try kara.",
+    "gu": "⚠️ Have javab api sakyo nathi, kaink problem thai. Thodi vaar pachi ferithi try karo.",
+}
+
+
 async def _answer_general_query(phone: str, text: str, trader: dict, is_voice_query: bool = False):
-    from datetime import date
-    from app.services.supabase_client import get_itc_summary, get_recent_invoices
-    from app.services.gemini import answer_trader_question
-    buckets = await get_itc_summary(trader["id"])
-    recent = await get_recent_invoices(trader["id"], limit=3)
-
-    # Same GSTR-1/GSTR-3B deadline math as main.py's _send_deadline_alerts
-    # scheduled job (GSTR-1 due 11th, GSTR-3B due 20th) -- without this, a
-    # trader asking "when is my GST deadline" had no deadline data in
-    # context_data at all, and the model correctly refused to guess rather
-    # than hallucinate a date. Kept as a small duplicate here rather than a
-    # shared import so this never risks touching the live cron job's code.
-    today = date.today()
-    if today.day <= 11:
-        next_filing_type, deadline_day = "GSTR-1", 11
-    else:
-        next_filing_type, deadline_day = "GSTR-3B", 20
-    days_remaining = deadline_day - today.day
-
-    context_data = {
-        "business_name": trader.get("business_name"),
-        "itc_summary_totals": buckets,
-        "recent_invoices": recent,
-        "next_filing_deadline": {
-            "filing_type": next_filing_type,
-            "deadline_day_of_month": deadline_day,
-            "days_remaining": days_remaining,
-        },
-    }
+    """
+    Answers a trader's typed or voice-transcribed question. Guaranteed to
+    always send SOMETHING back -- previously any exception here (a Supabase
+    hiccup, a malformed LLM response, anything at all) died silently inside
+    a fire-and-forget asyncio task with zero reply and no way for the
+    trader to know something went wrong, which is worse than a slow answer.
+    """
     language_pref = trader.get("language_pref", "hi")
-    answer = await answer_trader_question(text, context_data, language_pref)
+    try:
+        from datetime import date
+        from app.services.supabase_client import get_itc_summary, get_recent_invoices
+        from app.services.gemini import answer_trader_question
+        buckets = await get_itc_summary(trader["id"])
+        recent = await get_recent_invoices(trader["id"], limit=3)
+
+        # Same GSTR-1/GSTR-3B deadline math as main.py's _send_deadline_alerts
+        # scheduled job (GSTR-1 due 11th, GSTR-3B due 20th) -- without this, a
+        # trader asking "when is my GST deadline" had no deadline data in
+        # context_data at all, and the model correctly refused to guess rather
+        # than hallucinate a date. Kept as a small duplicate here rather than a
+        # shared import so this never risks touching the live cron job's code.
+        today = date.today()
+        if today.day <= 11:
+            next_filing_type, deadline_day = "GSTR-1", 11
+        else:
+            next_filing_type, deadline_day = "GSTR-3B", 20
+        days_remaining = deadline_day - today.day
+
+        context_data = {
+            "business_name": trader.get("business_name"),
+            "itc_summary_totals": buckets,
+            "recent_invoices": recent,
+            "next_filing_deadline": {
+                "filing_type": next_filing_type,
+                "deadline_day_of_month": deadline_day,
+                "days_remaining": days_remaining,
+            },
+        }
+        answer = await answer_trader_question(text, context_data, language_pref)
+        if not answer or not answer.strip():
+            # An empty string is a valid non-exception return from the LLM
+            # router when every backend failed -- WhatsApp rejects sending
+            # empty text, which is the same silent-failure symptom as an
+            # uncaught exception, so treat it the same way.
+            raise ValueError("answer_trader_question returned an empty answer")
+    except Exception as e:
+        logger.error(f"_answer_general_query failed for {phone}: {e}")
+        answer = _GENERAL_QUERY_FAILURE_MSGS.get(language_pref, _GENERAL_QUERY_FAILURE_MSGS["hi"])
+
     await whatsapp.send_text_message(phone, answer)
     # Match output modality to input modality: a voice note back is only
     # sent when the trader themselves asked by voice -- a typed question (or
