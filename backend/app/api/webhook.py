@@ -877,15 +877,34 @@ async def _send_voice_note(phone: str, text: str, language_pref: str) -> None:
 
 
 async def _answer_general_query(phone: str, text: str, trader: dict, is_voice_query: bool = False):
+    from datetime import date
     from app.services.supabase_client import get_itc_summary, get_recent_invoices
     from app.services.gemini import answer_trader_question
     buckets = await get_itc_summary(trader["id"])
     recent = await get_recent_invoices(trader["id"], limit=3)
 
+    # Same GSTR-1/GSTR-3B deadline math as main.py's _send_deadline_alerts
+    # scheduled job (GSTR-1 due 11th, GSTR-3B due 20th) -- without this, a
+    # trader asking "when is my GST deadline" had no deadline data in
+    # context_data at all, and the model correctly refused to guess rather
+    # than hallucinate a date. Kept as a small duplicate here rather than a
+    # shared import so this never risks touching the live cron job's code.
+    today = date.today()
+    if today.day <= 11:
+        next_filing_type, deadline_day = "GSTR-1", 11
+    else:
+        next_filing_type, deadline_day = "GSTR-3B", 20
+    days_remaining = deadline_day - today.day
+
     context_data = {
         "business_name": trader.get("business_name"),
         "itc_summary_totals": buckets,
-        "recent_invoices": recent
+        "recent_invoices": recent,
+        "next_filing_deadline": {
+            "filing_type": next_filing_type,
+            "deadline_day_of_month": deadline_day,
+            "days_remaining": days_remaining,
+        },
     }
     language_pref = trader.get("language_pref", "hi")
     answer = await answer_trader_question(text, context_data, language_pref)
