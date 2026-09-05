@@ -15,6 +15,9 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_TRADER_PWA_URL": "https://munim-frontend-1051889700424.us-central1.run.app/trader"
       }
     },
     "production": {
