@@ -471,7 +471,7 @@ async def handle_voice_message(phone: str, msg: dict):
     # 3. Send transcribed text to general query handler
     trader = await get_trader_by_phone(phone)
     if trader:
-        await _answer_general_query(phone, transcribed_text, trader)
+        await _answer_general_query(phone, transcribed_text, trader, is_voice_query=True)
     else:
         await whatsapp.send_text_message(phone, "Pehle register karo! 'Hi' likh ke bhejo.")
 
@@ -613,7 +613,6 @@ async def handle_invoice_message(phone: str, msg: dict):
 
         # Send diagnosis to trader
         await whatsapp.send_text_message(phone, diagnosis.diagnosis_hi)
-        await _send_voice_note(phone, diagnosis.diagnosis_hi, trader.get("language_pref", "hi"))
 
         # Notify CA via Email
         settings = get_settings()
@@ -877,7 +876,7 @@ async def _send_voice_note(phone: str, text: str, language_pref: str) -> None:
         logger.warning(f"Voice-note generation/send failed (non-fatal): {e}")
 
 
-async def _answer_general_query(phone: str, text: str, trader: dict):
+async def _answer_general_query(phone: str, text: str, trader: dict, is_voice_query: bool = False):
     from app.services.supabase_client import get_itc_summary, get_recent_invoices
     from app.services.gemini import answer_trader_question
     buckets = await get_itc_summary(trader["id"])
@@ -891,7 +890,11 @@ async def _answer_general_query(phone: str, text: str, trader: dict):
     language_pref = trader.get("language_pref", "hi")
     answer = await answer_trader_question(text, context_data, language_pref)
     await whatsapp.send_text_message(phone, answer)
-    await _send_voice_note(phone, answer, language_pref)
+    # Match output modality to input modality: a voice note back is only
+    # sent when the trader themselves asked by voice -- a typed question (or
+    # an invoice photo, which never calls this at all) gets text only.
+    if is_voice_query:
+        await _send_voice_note(phone, answer, language_pref)
 
 
 async def _send_itc_status(phone: str, trader: dict):
