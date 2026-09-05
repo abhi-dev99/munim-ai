@@ -38,7 +38,12 @@ class Settings(BaseSettings):
 
     # --- Groq ---
     groq_api_key: str = ""
-    groq_model: str = "llama-3.1-8b-instant"
+    # llama-3.1-8b-instant (and Groq's whole Llama lineup) has been removed
+    # from Groq's model catalog -- confirmed live via GET /openai/v1/models,
+    # which returned 404 model_not_found for it and no llama-3.x model at
+    # all. openai/gpt-oss-20b is the closest current equivalent: fast,
+    # general-purpose, open-weight.
+    groq_model: str = "openai/gpt-oss-20b"
 
     # --- Meta WhatsApp ---
     meta_whatsapp_token: str = ""
