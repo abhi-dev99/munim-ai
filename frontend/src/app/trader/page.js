@@ -30,10 +30,12 @@ const QUALITY_ANALYSIS_MAX_DIMENSION = 800;
 // product targets. Long enough not to abort a real, slow-but-working Gemini
 // OCR round trip; short enough that a truly stuck request still falls back
 // to the offline queue instead of leaving the trader staring at a spinner.
-// 45s (not the original 30s) after a real device on mobile data hit this
-// during normal Gemini Vision processing time, not a dead connection —
-// 30s was cutting off requests that were genuinely still working.
-const UPLOAD_TIMEOUT_MS = 45000;
+// 75s (not 45s, not the original 30s) after checking real Cloud Run request
+// logs for this exact endpoint and finding genuine 200 OK responses taking
+// up to 44s server-side alone — 45s left almost no margin once real network
+// transit time is added on top, so the client's abort was firing moments
+// before an otherwise-successful response made it back.
+const UPLOAD_TIMEOUT_MS = 75000;
 
 // There's no on-device OCR in this app (see OCV-3 in
 // IQOO_DEVICE_CAPABILITY_SPEC.md — deliberately not built), so there's no
