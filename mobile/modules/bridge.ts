@@ -37,7 +37,19 @@ export type NativeToWebMessage =
   | { type: 'MUNIM_EXPLAIN_VERDICT_CHUNK'; requestId: string; token: string }
   | { type: 'MUNIM_EXPLAIN_VERDICT_DONE'; requestId: string; fullText: string }
   | { type: 'MUNIM_EXPLAIN_VERDICT_ERROR'; requestId: string; message: string }
-  | { type: 'MUNIM_CAPTURE_PHOTO_RESULT'; requestId: string; base64: string; mimeType: string }
+  | {
+      type: 'MUNIM_CAPTURE_PHOTO_RESULT'
+      requestId: string
+      base64: string
+      mimeType: string
+      // Best-effort GPS tag, set by SteadyCameraCapture just before it calls
+      // onCaptured (see setPendingCaptureLocation below). Absent -- not
+      // null, just missing -- whenever permission was denied, location
+      // services were off, or no fix resolved in time. Never blocks or
+      // delays a capture.
+      latitude?: number
+      longitude?: number
+    }
   | { type: 'MUNIM_CAPTURE_PHOTO_ERROR'; requestId: string; message: string }
   | { type: 'MUNIM_BIOMETRIC_RESULT'; requestId: string; success: boolean; reason?: string }
   | {
@@ -82,9 +94,33 @@ export function setCaptureRequestHandler(handler: CaptureRequestHandler | null):
   captureRequestHandler = handler
 }
 
+// Best-effort GPS tag for whichever capture is about to be reported as
+// done. SteadyCameraCapture owns the actual expo-location request (it's the
+// screen that knows a photo is being taken right now) and can't call
+// sendCapturePhotoResult itself -- that call happens in App.tsx's
+// handleCaptured, which this module doesn't control the signature of -- so
+// it hands the coordinates off here instead, one shot, right before
+// invoking its onCaptured prop. Consumed and cleared the next time
+// sendCapturePhotoResult runs; safe because only one capture is ever
+// in-flight at a time (App.tsx shows one SteadyCameraCapture screen at a
+// time, gated on a single captureRequestId).
+let pendingCaptureLocation: { latitude: number; longitude: number } | null = null
+
+export function setPendingCaptureLocation(location: { latitude: number; longitude: number } | null): void {
+  pendingCaptureLocation = location
+}
+
 export function sendCapturePhotoResult(webview: WebView | null, requestId: string, base64: string, mimeType: string): void {
   if (!webview) return
-  sendToWeb(webview, { type: 'MUNIM_CAPTURE_PHOTO_RESULT', requestId, base64, mimeType })
+  const location = pendingCaptureLocation
+  pendingCaptureLocation = null
+  sendToWeb(webview, {
+    type: 'MUNIM_CAPTURE_PHOTO_RESULT',
+    requestId,
+    base64,
+    mimeType,
+    ...(location ? { latitude: location.latitude, longitude: location.longitude } : {}),
+  })
 }
 
 export function sendCapturePhotoError(webview: WebView | null, requestId: string, message: string): void {
@@ -233,7 +269,7 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
       handlers.onError && handlers.onError(msg.message);
       delete pending[msg.requestId];
     } else if (msg.type === 'MUNIM_CAPTURE_PHOTO_RESULT') {
-      handlers.onCaptured && handlers.onCaptured(msg.base64, msg.mimeType);
+      handlers.onCaptured && handlers.onCaptured(msg.base64, msg.mimeType, msg.latitude, msg.longitude);
       delete pending[msg.requestId];
     } else if (msg.type === 'MUNIM_CAPTURE_PHOTO_ERROR') {
       handlers.onError && handlers.onError(msg.message);
@@ -282,8 +318,11 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
     },
 
     // Shows the native motion-gated camera screen. callbacks:
-    // { onCaptured(base64, mimeType), onError(message) }. The screen also
-    // has its own cancel (X) button, which arrives here as onError with a
+    // { onCaptured(base64, mimeType, latitude?, longitude?), onError(message) }.
+    // latitude/longitude are present only if location permission was granted
+    // and a fix resolved in time -- absent (not null) otherwise, same
+    // best-effort spirit as the motion gate itself. The screen also has its
+    // own cancel (X) button, which arrives here as onError with a
     // "cancelled" message rather than a separate callback -- one failure
     // path for the web side to handle instead of two.
     capturePhoto: function (callbacks) {
