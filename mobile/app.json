@@ -34,6 +34,12 @@
         }
       ],
       [
+        "expo-location",
+        {
+          "locationPermission": "Munim tags each scan with a coarse location, used only to flag invoices scanned unusually far from where you normally scan."
+        }
+      ],
+      [
         "llama.rn",
         {
           "enableEntitlements": true,

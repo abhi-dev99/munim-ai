@@ -4,6 +4,12 @@ All notable changes to Munim.ai are documented here. Format loosely follows [Kee
 
 ---
 
+## 2026-09-05
+
+### In Progress
+- Scan-location tagging + a soft "location anomaly" signal, on the `iqoo/on-device-llm-wrapper` mobile branch (unmerged). `mobile/components/SteadyCameraCapture.tsx` requests a coarse, best-effort GPS fix (`expo-location`, added here) alongside the existing motion-gated capture and threads it through `mobile/modules/bridge.ts`'s `MUNIM_CAPTURE_PHOTO_RESULT` message (both fields optional/additive) to `frontend/src/app/trader/page.js`, which forwards it to `backend/app/api/webhook.py:upload_invoice_direct` as optional form fields. The backend compares the new scan against the centroid of this trader's last (up to) 20 geotagged scans (plain haversine distance, >50km and ≥3 prior scans to flag) and returns it as an additive `location_signal` field — the geographic counterpart to `app/domain/fraud.py`'s Benford's-law/velocity signals, deliberately kept out of `FraudScorer`'s weighted score (see that module's comment). Needs `backend/migrations/add_invoice_geolocation.sql` applied by hand before any geotagged scan will actually persist its coordinates; degrades to "no location, no signal, upload works exactly as before" at every layer if permission is denied, GPS is off, or the migration isn't applied yet.
+  **Note on scope**: `IQOO_DEVICE_CAPABILITY_SPEC.md` §4 explicitly rejected "Location/GPS-based supplier verification" during the original 30-hour build for consent/privacy and schema-expansion reasons. This is a narrower, different feature — it never touches supplier identity or GSTIN address, only compares a trader's own device against its own scan history — but it reintroduces the same schema dimension (a persisted GPS coordinate tied to financial records) and the same consent question that entry flagged: today the only disclosure is the OS permission dialog's rationale string (`app.json`'s `locationPermission` message), with no trader-facing explanation, opt-out, or visibility into stored location data beyond that. Worth a real look before this goes in front of a judge or a real trader, not just a code review.
+
 ## 2026-09-04
 
 ### Fixed

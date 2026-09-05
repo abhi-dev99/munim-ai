@@ -92,7 +92,7 @@ window.MunimNative: {
 };
 
 type CaptureCallbacks = {
-  onCaptured?: (base64: string, mimeType: string) => void; // one JPEG frame, gated on device motion being still
+  onCaptured?: (base64: string, mimeType: string, latitude?: number, longitude?: number) => void; // one JPEG frame, gated on device motion being still
   onError?: (message: string) => void; // fires with message "cancelled" if the trader closes the screen without capturing
 };
 
@@ -152,7 +152,7 @@ listeners).
 | `MUNIM_EXPLAIN_VERDICT_CHUNK` | `requestId`, `token: string` | One streamed token. Fires `onToken`. |
 | `MUNIM_EXPLAIN_VERDICT_DONE` | `requestId`, `fullText: string` | Generation finished. Fires `onDone`, then the request is cleaned up. |
 | `MUNIM_EXPLAIN_VERDICT_ERROR` | `requestId`, `message: string` | Generation failed (model load failure, download failure, llama.rn error). Fires `onError`, then cleaned up. |
-| `MUNIM_CAPTURE_PHOTO_RESULT` | `requestId`, `base64: string`, `mimeType: string` | A photo was captured. Fires `onCaptured`, then cleaned up. |
+| `MUNIM_CAPTURE_PHOTO_RESULT` | `requestId`, `base64: string`, `mimeType: string`, `latitude?: number`, `longitude?: number` | A photo was captured. Fires `onCaptured`, then cleaned up. `latitude`/`longitude` are present only when the trader granted location permission and a coarse GPS fix resolved before the capture — absent (not `null`, just missing from the JSON) otherwise; never delays or blocks a capture. |
 | `MUNIM_CAPTURE_PHOTO_ERROR` | `requestId`, `message: string` | Trader cancelled (`message: "cancelled"`) or the camera/permission failed. Fires `onError`, then cleaned up. |
 | `MUNIM_STATUS_EVENT` | `status`, `progress?`, `message?` | Model lifecycle: `idle → downloading → loading → ready`, or `error` at any point. Fires every subscribed `onStatusChange` listener and updates the value `getStatus()` resolves. |
 
@@ -188,10 +188,34 @@ add separators or whitespace between chunks.
   `explainVerdict` for the first time in a session so a first-run download
   doesn't look like a hang.
 
+## Scan-location tagging
+
+`MUNIM_CAPTURE_PHOTO_RESULT`'s optional `latitude`/`longitude` (see the wire
+protocol table above) back a soft anomaly signal, not a feature of the
+bridge protocol itself: `mobile/components/SteadyCameraCapture.tsx` requests
+a coarse, best-effort GPS fix in parallel with the camera (never blocking or
+delaying a capture), and `frontend/src/app/trader/page.js` forwards
+whatever it got to `backend/app/api/webhook.py`'s `upload_invoice_direct` as
+optional form fields. The backend compares the new scan's coordinates
+against the centroid of this trader's recent geotagged scans and returns a
+`location_signal` (see that endpoint's docstring) — the geographic
+counterpart to `backend/app/domain/fraud.py`'s Benford's-law/velocity
+signals, kept as its own check rather than folded into `FraudScorer` (see
+that module's comment for why). Same honesty standard as the rest of the
+fraud engine: it's a distance, not proof of anything, and it never blocks
+the scan or changes the ITC verdict.
+
 ## Status of this bridge
 
-Built and present in `mobile/` (native side only, as scoped). **Not yet
-wired into `frontend/src/app/trader/page.js`** — that integration (feature
-detection, a UI affordance to trigger on-device explanation, a fallback path
-to the existing backend call) is an explicit follow-up task, out of scope
-for this pass, and `frontend/` was not modified while building this.
+`explainVerdict` (on-device narration) is built and present in `mobile/`
+(native side only, as scoped). **Not yet wired into
+`frontend/src/app/trader/page.js`** — that integration (feature detection, a
+UI affordance to trigger on-device explanation, a fallback path to the
+existing backend call) is an explicit follow-up task, out of scope for this
+pass.
+
+`capturePhoto` (including the location tag above), by contrast, **is wired
+into `frontend/src/app/trader/page.js`**: `triggerScan()` feature-detects
+`window.MunimNative.capturePhoto` and uses it in place of the OS
+camera-app handoff, falling back to the plain file input in a browser or on
+a genuine capture failure.

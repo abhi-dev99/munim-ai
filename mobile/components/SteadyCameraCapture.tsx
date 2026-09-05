@@ -22,12 +22,24 @@
  * this was built against, not derived from a blur-vs-motion dataset. Treat
  * them as the first thing to tune if real invoice scans show they're too
  * strict (never goes steady) or too loose (still blurry captures).
+ *
+ * This screen also tags the capture with a coarse GPS fix (best-effort,
+ * same philosophy as the motion gate: it never blocks or delays a capture).
+ * That backs a soft "scan location anomaly" signal in
+ * backend/app/api/webhook.py -- the geographic counterpart to fraud.py's
+ * Benford's-law/velocity signals nobody runs manually at a ₹1,000/month CA
+ * retainer. Location is requested once on mount, in parallel with the
+ * camera, so a fix is usually ready well before the steady-hold gate fires;
+ * if it isn't (permission denied, GPS off, no fix yet), the capture
+ * proceeds with no coordinates at all.
  */
 
 import { CameraView, useCameraPermissions } from 'expo-camera'
+import * as Location from 'expo-location'
 import { DeviceMotion } from 'expo-sensors'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
+import { setPendingCaptureLocation } from '../modules/bridge'
 
 // Rotation rate (deg/s) and linear acceleration (m/s^2) must both be under
 // these for a sample to count as "steady". Both signals matter: rotation
@@ -53,6 +65,9 @@ export default function SteadyCameraCapture({ onCaptured, onCancel }: SteadyCame
   const [capturing, setCapturing] = useState(false)
   const steadySinceRef = useRef<number | null>(null)
   const capturingRef = useRef(false)
+  // Whatever the best-effort location request below has resolved by the
+  // time a capture actually fires -- null until (if ever) a fix arrives.
+  const locationRef = useRef<{ latitude: number; longitude: number } | null>(null)
 
   const capture = useCallback(async () => {
     if (capturingRef.current) return
@@ -65,6 +80,10 @@ export default function SteadyCameraCapture({ onCaptured, onCancel }: SteadyCame
         skipProcessing: true,
       })
       if (photo?.base64) {
+        // Handed off through the bridge module rather than as extra
+        // onCaptured args App.tsx would need to forward -- see
+        // setPendingCaptureLocation's own comment in modules/bridge.ts.
+        setPendingCaptureLocation(locationRef.current)
         onCaptured(photo.base64, 'image/jpeg')
         return
       }
@@ -76,6 +95,32 @@ export default function SteadyCameraCapture({ onCaptured, onCancel }: SteadyCame
     capturingRef.current = false
     setCapturing(false)
   }, [onCaptured])
+
+  // Best-effort, one-shot: fire as soon as this screen mounts so a fix has
+  // the whole steady-hold window (and then some) to resolve, rather than
+  // waiting until the shutter is about to fire and adding latency to the
+  // capture itself. Denied permission, GPS off, or a fix that just never
+  // arrives all leave locationRef.current at null -- capture() above
+  // already treats that as "no location" rather than waiting on it.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync()
+        if (status !== 'granted' || cancelled) return
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low })
+        if (!cancelled) {
+          locationRef.current = { latitude: position.coords.latitude, longitude: position.coords.longitude }
+        }
+      } catch {
+        // No GPS hardware/permission/services -- proceed without a
+        // location tag, same as any other best-effort signal on this screen.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!permission?.granted) return

@@ -159,6 +159,34 @@ async def get_invoices_for_trader(trader_id: str, month: int = None, year: int =
         return []
 
 
+async def get_recent_invoice_locations(trader_id: str, limit: int = 20, exclude_invoice_id: str = None) -> list[dict]:
+    """
+    This trader's most recent invoices that have a GPS tag (backend/
+    migrations/add_invoice_geolocation.sql — nullable, most invoices won't
+    have one). Feeds webhook.py's scan-location anomaly check only; never
+    used for anything ITC/compliance-related.
+    """
+    try:
+        db = get_supabase()
+        response = (
+            db.table("invoices")
+            .select("id, latitude, longitude")
+            .eq("trader_id", trader_id)
+            .not_.is_("latitude", "null")
+            .not_.is_("longitude", "null")
+            .order("created_at", desc=True)
+            .limit(limit + 1)  # +1 headroom: the just-inserted row can itself be in this page
+            .execute()
+        )
+        rows = response.data or []
+        if exclude_invoice_id:
+            rows = [r for r in rows if r.get("id") != exclude_invoice_id]
+        return rows[:limit]
+    except Exception as e:
+        logger.error(f"Failed to get recent invoice locations: {e}")
+        return []
+
+
 async def check_duplicate_invoice(invoice_hash: str) -> bool:
     """Check if an invoice hash already exists."""
     try:
