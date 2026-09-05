@@ -106,7 +106,11 @@ function useSensor<M>(sensor: SensorLike<M>): SensorState<M> {
   return state
 }
 
-const fmt = (n: number) => n.toFixed(3)
+// Some readings on some device/OS combos come back with a field missing
+// entirely (see accelerationIncludingGravity above) rather than the type
+// definitions' promise that it's always a number -- one defensive check
+// here covers every fmt() call site instead of guarding each one by hand.
+const fmt = (n: number | null | undefined) => (typeof n === 'number' ? n.toFixed(3) : '—')
 
 export type DeviceSensorsScreenProps = {
   onClose: () => void
@@ -189,14 +193,16 @@ export default function DeviceSensorsScreen({ onClose }: DeviceSensorsScreenProp
               />
               <AxisReading
                 label="incl. gravity"
-                x={r.accelerationIncludingGravity.x}
-                y={r.accelerationIncludingGravity.y}
-                z={r.accelerationIncludingGravity.z}
+                x={r.accelerationIncludingGravity?.x ?? null}
+                y={r.accelerationIncludingGravity?.y ?? null}
+                z={r.accelerationIncludingGravity?.z ?? null}
                 unit="m/s²"
               />
-              <Text style={styles.readingLine}>
-                rotation α/β/γ: {fmt(r.rotation.alpha)} / {fmt(r.rotation.beta)} / {fmt(r.rotation.gamma)}
-              </Text>
+              {r.rotation ? (
+                <Text style={styles.readingLine}>
+                  rotation α/β/γ: {fmt(r.rotation.alpha)} / {fmt(r.rotation.beta)} / {fmt(r.rotation.gamma)}
+                </Text>
+              ) : null}
               {r.rotationRate ? (
                 <Text style={styles.readingLine}>
                   rotationRate α/β/γ: {fmt(r.rotationRate.alpha)} / {fmt(r.rotationRate.beta)} /{' '}
