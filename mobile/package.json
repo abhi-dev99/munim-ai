@@ -8,6 +8,7 @@
     "expo-camera": "~57.0.4",
     "expo-dev-client": "~57.0.18",
     "expo-file-system": "~57.0.6",
+    "expo-local-authentication": "~57.0.2",
     "expo-sensors": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "llama.rn": "^0.12.9",

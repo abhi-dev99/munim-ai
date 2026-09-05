@@ -1,9 +1,11 @@
 # Native ↔ web bridge
 
-How `frontend/src/app/trader/page.js` (untouched by this app) can, in a
-follow-up task, detect that it's running inside the `mobile/` native shell
-and use the on-device model for the "narrate this verdict" step instead of
-calling the backend's Gemini explanation endpoint.
+How `frontend/src/app/trader/page.js` can detect that it's running inside
+the `mobile/` native shell and use native capabilities from there — the
+on-device model for the "narrate this verdict" step instead of calling the
+backend's Gemini explanation endpoint (still a follow-up task, see "Status
+of this bridge" below), and a biometric confirmation gate on dismissing a
+`FRAUD_FLAGGED` scan result (wired in already).
 
 Implementation lives in `mobile/modules/bridge.ts` (native side) — the
 injected script that creates `window.MunimNative` inside the WebView's page
@@ -89,11 +91,33 @@ window.MunimNative: {
   // that file input still exists and still works unmodified in a plain
   // browser, where window.MunimNative doesn't exist at all.
   capturePhoto(callbacks: CaptureCallbacks): string;
+
+  // Asks the OS for a Face ID / Touch ID / Android fingerprint prompt to
+  // confirm a sensitive action — today, dismissing a FRAUD_FLAGGED scan
+  // result (see "Wiring example: gating a FRAUD_FLAGGED dismiss" below).
+  // Resolves via onResult exactly once, including a declined/cancelled
+  // prompt — this is not a hard gate, see that section for the required
+  // fallback behavior.
+  confirmBiometric(callbacks: BiometricCallbacks): string;
 };
 
 type CaptureCallbacks = {
   onCaptured?: (base64: string, mimeType: string) => void; // one JPEG frame, gated on device motion being still
   onError?: (message: string) => void; // fires with message "cancelled" if the trader closes the screen without capturing
+};
+
+type BiometricCallbacks = {
+  // Fires exactly once with the real outcome. `reason` is set whenever
+  // `success` is false:
+  //  - 'not_available' — this device can't do biometric auth at all (no
+  //    sensor, or one with nothing enrolled). Not a declined prompt — there
+  //    was nothing to prompt. Callers MUST treat this as "fall back to
+  //    immediate dismiss", not as "leave gated" (see wiring example below).
+  //  - anything else — one of expo-local-authentication's own error codes
+  //    (e.g. 'user_cancel', 'lockout', 'authentication_failed') from an
+  //    actual prompt that appeared and didn't succeed.
+  onResult?: (success: boolean, reason?: string) => void;
+  onError?: (message: string) => void; // native/bridge failure; not currently reachable, kept for shape parity with capturePhoto
 };
 
 type StatusEvent = {
@@ -138,6 +162,7 @@ received by `<WebView onMessage>` in `mobile/App.tsx`, routed by
 | `MUNIM_EXPLAIN_VERDICT_REQUEST` | `requestId: string`, `verdict: Verdict`, `lang: 'hi' \| 'en'` | Start narrating this verdict on-device. |
 | `MUNIM_CANCEL_REQUEST` | `requestId: string` | Stop the in-flight generation. |
 | `MUNIM_CAPTURE_PHOTO_REQUEST` | `requestId: string` | Show the motion-gated camera screen. |
+| `MUNIM_BIOMETRIC_REQUEST` | `requestId: string` | Show an OS Face ID/Touch ID/fingerprint prompt. |
 | `MUNIM_BRIDGE_READY` | — | Sent once, automatically, when the injected script finishes setting up `window.MunimNative`. Informational only — native doesn't need to act on it, but it's useful to log. |
 
 ### Native → Web
@@ -154,12 +179,37 @@ listeners).
 | `MUNIM_EXPLAIN_VERDICT_ERROR` | `requestId`, `message: string` | Generation failed (model load failure, download failure, llama.rn error). Fires `onError`, then cleaned up. |
 | `MUNIM_CAPTURE_PHOTO_RESULT` | `requestId`, `base64: string`, `mimeType: string` | A photo was captured. Fires `onCaptured`, then cleaned up. |
 | `MUNIM_CAPTURE_PHOTO_ERROR` | `requestId`, `message: string` | Trader cancelled (`message: "cancelled"`) or the camera/permission failed. Fires `onError`, then cleaned up. |
+| `MUNIM_BIOMETRIC_RESULT` | `requestId`, `success: boolean`, `reason?: string` | The prompt's outcome — success, a declined/cancelled attempt, or `reason: "not_available"` when this device can't do biometric auth at all. Fires `onResult`, then cleaned up. |
 | `MUNIM_STATUS_EVENT` | `status`, `progress?`, `message?` | Model lifecycle: `idle → downloading → loading → ready`, or `error` at any point. Fires every subscribed `onStatusChange` listener and updates the value `getStatus()` resolves. |
 
 `__munimNativeDispatch` is not meant to be called directly by page code —
 it's plumbing between `mobile/modules/bridge.ts` and the `window.MunimNative`
 wrapper the injected script defines. Page code should only ever touch
 `window.MunimNative`.
+
+### Wiring example: gating a FRAUD_FLAGGED dismiss
+
+This one IS wired into `frontend/src/app/trader/page.js` (unlike
+`explainVerdict`/`capturePhoto` above, still follow-up work) — dismissing a
+`FRAUD_FLAGGED` scan result requires a successful biometric confirmation
+first, everywhere the device can actually do one:
+
+```js
+const confirmBiometric = window.MunimNative?.confirmBiometric;
+if (scanResult.status !== 'FRAUD_FLAGGED' || typeof confirmBiometric !== 'function') {
+  dismiss(); // plain browser, or nothing FRAUD_FLAGGED to gate
+} else {
+  confirmBiometric({
+    onResult: (success, reason) => {
+      // 'not_available' means this device can't run the gate at all --
+      // never strand the trader behind a prompt their phone can't show.
+      if (success || reason === 'not_available') dismiss();
+      // otherwise (cancelled, failed, locked out) leave the alert open.
+    },
+    onError: () => dismiss(), // bridge/native failure, not a declined prompt
+  });
+}
+```
 
 ## Streaming format
 
@@ -190,8 +240,16 @@ add separators or whitespace between chunks.
 
 ## Status of this bridge
 
-Built and present in `mobile/` (native side only, as scoped). **Not yet
-wired into `frontend/src/app/trader/page.js`** — that integration (feature
-detection, a UI affordance to trigger on-device explanation, a fallback path
-to the existing backend call) is an explicit follow-up task, out of scope
-for this pass, and `frontend/` was not modified while building this.
+`explainVerdict`/`capturePhoto`: built and present in `mobile/` (native side
+only, as scoped). **Not yet wired into `frontend/src/app/trader/page.js`** —
+that integration (feature detection, a UI affordance to trigger on-device
+explanation, a fallback path to the existing backend call) is an explicit
+follow-up task, out of scope for this pass.
+
+`confirmBiometric`: wired into `frontend/src/app/trader/page.js` — it gates
+the dismiss (X) button on a `FRAUD_FLAGGED` scan-result toast behind a
+successful biometric prompt, falling back to the previous immediate-dismiss
+behavior whenever `window.MunimNative` or biometric hardware/enrollment
+isn't available (see "Wiring example" above). This never blocks a trader
+from eventually dismissing the alert — it only adds a deliberate
+confirmation step where the device can actually provide one.

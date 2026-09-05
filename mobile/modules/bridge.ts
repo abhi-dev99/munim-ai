@@ -30,6 +30,7 @@ export type WebToNativeMessage =
   | { type: 'MUNIM_EXPLAIN_VERDICT_REQUEST'; requestId: string; verdict: Verdict; lang: Lang }
   | { type: 'MUNIM_CANCEL_REQUEST'; requestId: string }
   | { type: 'MUNIM_CAPTURE_PHOTO_REQUEST'; requestId: string }
+  | { type: 'MUNIM_BIOMETRIC_REQUEST'; requestId: string }
   | { type: 'MUNIM_BRIDGE_READY' }
 
 export type NativeToWebMessage =
@@ -38,6 +39,7 @@ export type NativeToWebMessage =
   | { type: 'MUNIM_EXPLAIN_VERDICT_ERROR'; requestId: string; message: string }
   | { type: 'MUNIM_CAPTURE_PHOTO_RESULT'; requestId: string; base64: string; mimeType: string }
   | { type: 'MUNIM_CAPTURE_PHOTO_ERROR'; requestId: string; message: string }
+  | { type: 'MUNIM_BIOMETRIC_RESULT'; requestId: string; success: boolean; reason?: string }
   | {
       type: 'MUNIM_STATUS_EVENT'
       status: 'idle' | 'downloading' | 'loading' | 'ready' | 'error'
@@ -118,6 +120,36 @@ export async function handleBridgeMessage(rawData: string, webview: WebView | nu
       captureRequestHandler(message.requestId)
     } else {
       sendCapturePhotoError(webview, message.requestId, 'Camera capture is not available right now.')
+    }
+    return
+  }
+
+  if (message.type === 'MUNIM_BIOMETRIC_REQUEST') {
+    // Unlike capturePhoto, this needs no full-screen native view to render
+    // (the OS itself draws the Face ID/fingerprint prompt), so it's handled
+    // entirely here rather than round-tripping through a handler App.tsx
+    // registers -- one less thing for a parallel workstream touching
+    // App.tsx to conflict with.
+    const { requestId } = message
+    try {
+      const { authenticateBiometric } = await import('./biometrics')
+      const outcome = await authenticateBiometric('Confirm to dismiss this fraud alert')
+      sendToWeb(webview, {
+        type: 'MUNIM_BIOMETRIC_RESULT',
+        requestId,
+        success: outcome.success,
+        reason: outcome.reason,
+      })
+    } catch (err) {
+      // authenticateBiometric() already catches its own failures and
+      // resolves rather than throws -- this is only a backstop so the web
+      // side always gets a MUNIM_BIOMETRIC_RESULT and never waits forever.
+      sendToWeb(webview, {
+        type: 'MUNIM_BIOMETRIC_RESULT',
+        requestId,
+        success: false,
+        reason: err instanceof Error ? err.message : String(err),
+      })
     }
     return
   }
@@ -206,6 +238,9 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
     } else if (msg.type === 'MUNIM_CAPTURE_PHOTO_ERROR') {
       handlers.onError && handlers.onError(msg.message);
       delete pending[msg.requestId];
+    } else if (msg.type === 'MUNIM_BIOMETRIC_RESULT') {
+      handlers.onResult && handlers.onResult(msg.success, msg.reason);
+      delete pending[msg.requestId];
     }
   };
 
@@ -255,6 +290,23 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
       var requestId = genId();
       pending[requestId] = callbacks || {};
       send({ type: 'MUNIM_CAPTURE_PHOTO_REQUEST', requestId: requestId });
+      return requestId;
+    },
+
+    // Asks the OS for a Face ID / Touch ID / fingerprint prompt to confirm
+    // a sensitive action -- today, just dismissing a FRAUD_FLAGGED scan
+    // alert. callbacks: { onResult(success, reason), onError(message) }.
+    // onResult fires exactly once with the real outcome, including a
+    // declined/cancelled prompt (reason is one of expo-local-authentication's
+    // error codes, e.g. "user_cancel", "lockout" -- or "not_available" when
+    // this device can't do biometric auth at all: no sensor, or one with
+    // nothing enrolled). onError mirrors capturePhoto's shape for a caller
+    // that wants to register both, but native today always resolves via
+    // onResult rather than taking this path.
+    confirmBiometric: function (callbacks) {
+      var requestId = genId();
+      pending[requestId] = callbacks || {};
+      send({ type: 'MUNIM_BIOMETRIC_REQUEST', requestId: requestId });
       return requestId;
     },
   };

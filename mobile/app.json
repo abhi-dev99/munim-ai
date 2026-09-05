@@ -34,6 +34,12 @@
         }
       ],
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Munim uses Face ID to confirm you before dismissing a fraud alert."
+        }
+      ],
+      [
         "llama.rn",
         {
           "enableEntitlements": true,

@@ -200,19 +200,27 @@ export default function TraderApp() {
   // a closure over `traderId` captured there would stay frozen at its
   // mount-time value (null) for the lifetime of the listener.
   function applyUploadSuccess(data, forTraderId) {
+    const status = data.itc_verdict?.status || "PROCESSING";
     setScanState("success");
     setScanResult({
-      status: data.itc_verdict?.status || "PROCESSING",
+      status,
       itc_amount: data.itc_verdict?.itc_amount || 0,
       message: data.diagnosis_hi || data.diagnosis_en || "Invoice processed!",
       // Hint the TTS voice picker toward Hindi only when we actually got
       // Hindi text back — otherwise fall back to English.
       lang: data.diagnosis_hi ? "hi-IN" : "en-IN",
     });
-    setTimeout(() => {
-      setScanState("idle");
-      setScanResult(null);
-    }, 8000);
+    // A FRAUD_FLAGGED toast has to stay up until the trader deliberately
+    // dismisses it (see dismissScanToast's biometric gate below) — silently
+    // auto-clearing it on this timer would let the exact alert-fatigue
+    // click-through that gate exists to prevent happen automatically
+    // instead of by tapping X.
+    if (status !== "FRAUD_FLAGGED") {
+      setTimeout(() => {
+        setScanState("idle");
+        setScanResult(null);
+      }, 8000);
+    }
     if (forTraderId) refreshInvoiceHistory(forTraderId);
   }
 
@@ -317,6 +325,42 @@ export default function TraderApp() {
     }
 
     handleInvoiceUpload(file);
+  }
+
+  // Clears the scan-result toast — the X button's only job, except for a
+  // FRAUD_FLAGGED result, which is gated behind a biometric prompt first.
+  // A trader tapping through a fraud alert without a deliberate confirm is
+  // exactly the alert-fatigue click-through that undermines the statistical
+  // fraud detection this app runs (Benford's Law, sequential-invoice and
+  // velocity checks nobody does manually at a low-cost retainer — see
+  // CLAUDE.md's differentiator #2); the native shell's fingerprint/Face ID
+  // gate (mobile/modules/bridge.ts, `window.MunimNative.confirmBiometric`)
+  // turns "saw it, clicked X" into something a bit more deliberate and
+  // auditable. This can NEVER become a hard block, though: a plain browser
+  // (no window.MunimNative at all) or a phone with no biometric hardware/
+  // enrollment set up falls straight back to the old immediate-dismiss
+  // behavior — see BRIDGE.md's "not_available" reason for why that check
+  // has to happen after calling confirmBiometric, not before.
+  function dismissScanToast() {
+    const clear = () => { setScanState("idle"); setScanResult(null); };
+
+    const confirmBiometric = typeof window !== "undefined" ? window.MunimNative?.confirmBiometric : undefined;
+    if (scanResult?.status !== "FRAUD_FLAGGED" || typeof confirmBiometric !== "function") {
+      clear();
+      return;
+    }
+
+    confirmBiometric({
+      onResult: (success, reason) => {
+        // "not_available" means this device can't run the gate at all (no
+        // sensor, or nothing enrolled) — never strand the trader behind a
+        // prompt their phone can't show.
+        if (success || reason === "not_available") clear();
+        // Otherwise (cancelled, wrong finger, lockout...) leave the alert
+        // open so the trader can look again or retry.
+      },
+      onError: () => clear(), // bridge/native failure, not a declined prompt — same fallback as "not_available"
+    });
   }
 
   const statusColors = {
@@ -483,7 +527,7 @@ export default function TraderApp() {
             )}
           </div>
           {scanState !== "uploading" && (
-            <button onClick={() => { setScanState("idle"); setScanResult(null); }}>
+            <button onClick={dismissScanToast}>
               <X size={16} className="text-[var(--text-muted)]" />
             </button>
           )}
