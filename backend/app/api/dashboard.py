@@ -287,7 +287,7 @@ async def list_traders(current_trader_id: str = Depends(get_current_trader_id)):
         phone_10 = phone[-10:] if len(phone) >= 10 else phone
         
         response = db.table("traders").select(
-            "id, name, business_name, gstin, whatsapp_number, is_composition"
+            "id, name, business_name, gstin, whatsapp_number, is_composition, language_pref"
         ).or_(f"id.eq.{current_trader_id},ca_whatsapp_number.eq.{phone_full},ca_whatsapp_number.eq.{phone_10}").execute()
 
         return {"traders": response.data or []}

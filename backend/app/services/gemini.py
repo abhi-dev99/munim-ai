@@ -411,8 +411,17 @@ Schema:
         logger.error(f"Intent extraction via router failed: {e}")
         return {"intent": "unknown", "entities": {}}
 
-async def answer_trader_question(question: str, context_data: dict) -> str:
+async def answer_trader_question(question: str, context_data: dict, language_pref: str = "hi") -> str:
     """Answer a general GST/business question using the trader's actual context data."""
+    if language_pref == "en":
+        lang_str = "English"
+    elif language_pref == "mr":
+        lang_str = "Marathi (in Devanagari script)"
+    elif language_pref == "gu":
+        lang_str = "Gujarati (in Gujarati script)"
+    else:
+        lang_str = "Hindi (in Hinglish/Roman script. No Devanagari)"
+
     prompt = f"""You are Munim, an intelligent AI GST assistant for Indian traders.
 A trader has asked a question. You must answer it accurately based ONLY on the provided Context Data.
 If the question is completely unrelated to GST, taxes, invoices, or their business, politely refuse to answer.
@@ -422,7 +431,7 @@ Context Data (Their recent business numbers and invoices):
 {json.dumps(context_data, indent=2, default=str)}
 
 Rules:
-- Write in Hindi (Hinglish/Roman script). NO Devanagari script.
+- Write in {lang_str}.
 - Provide your response on single lines separated by double newlines (\\n\\n). DO NOT write paragraphs.
 - Keep it extremely SHORT, crisp, and to the point. Give the exact numbers requested.
 - Use emojis generously.

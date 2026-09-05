@@ -862,13 +862,14 @@ async def _answer_general_query(phone: str, text: str, trader: dict):
     from app.services.gemini import answer_trader_question
     buckets = await get_itc_summary(trader["id"])
     recent = await get_recent_invoices(trader["id"], limit=3)
-    
+
     context_data = {
         "business_name": trader.get("business_name"),
         "itc_summary_totals": buckets,
         "recent_invoices": recent
     }
-    answer = await answer_trader_question(text, context_data)
+    language_pref = trader.get("language_pref", "hi")
+    answer = await answer_trader_question(text, context_data, language_pref)
     await whatsapp.send_text_message(phone, answer)
 
 

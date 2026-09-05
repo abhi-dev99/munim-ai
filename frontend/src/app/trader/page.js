@@ -30,7 +30,10 @@ const QUALITY_ANALYSIS_MAX_DIMENSION = 800;
 // product targets. Long enough not to abort a real, slow-but-working Gemini
 // OCR round trip; short enough that a truly stuck request still falls back
 // to the offline queue instead of leaving the trader staring at a spinner.
-const UPLOAD_TIMEOUT_MS = 30000;
+// 45s (not the original 30s) after a real device on mobile data hit this
+// during normal Gemini Vision processing time, not a dead connection —
+// 30s was cutting off requests that were genuinely still working.
+const UPLOAD_TIMEOUT_MS = 45000;
 
 // There's no on-device OCR in this app (see OCV-3 in
 // IQOO_DEVICE_CAPABILITY_SPEC.md — deliberately not built), so there's no
@@ -99,6 +102,7 @@ export default function TraderApp() {
   const [traderId, setTraderId] = useState(null);
   const [traderName, setTraderName] = useState("");
   const [traderPhone, setTraderPhone] = useState(null);
+  const [traderLang, setTraderLang] = useState("hi");
   const [scanState, setScanState] = useState("idle");
   const [scanResult, setScanResult] = useState(null);
   const [activeTab, setActiveTab] = useState("home"); // home | history | reports
@@ -121,6 +125,7 @@ export default function TraderApp() {
         const activeId = activeTrader?.id || "demo";
         setTraderName(activeTrader?.business_name || activeTrader?.name || "My Business");
         setTraderPhone(activeTrader?.whatsapp_number || null);
+        setTraderLang(activeTrader?.language_pref || "hi");
 
         const res = await authFetch(`${API_BASE}/api/v1/dashboard/summary/${activeId}`);
       if (res.ok) {
@@ -321,12 +326,22 @@ export default function TraderApp() {
     });
   }
 
-  async function queueForLater(file, forTraderId, options = {}) {
+  // `reason` distinguishes *why* this queued -- "offline" (navigator.onLine
+  // said so before the request even started) vs "failed" (the request
+  // itself errored or hit UPLOAD_TIMEOUT_MS after actually being sent).
+  // Collapsing both into one generic "No connection" message was actively
+  // misleading: a trader on a real, working-but-slow connection would see
+  // "no connection" for a request that was genuinely still processing,
+  // with no way to tell that apart from actually being offline.
+  async function queueForLater(file, forTraderId, options = {}, reason = "offline") {
     await queueUpload(file, { trader_id: forTraderId, ...options });
     await refreshQueuedCount();
     setScanState("queued");
     setScanResult({
-      message: "No connection — invoice queued. It'll upload automatically once you're back online.",
+      message:
+        reason === "offline"
+          ? "No connection — invoice queued. It'll upload automatically once you're back online."
+          : "Upload didn't finish in time (slow connection?) — invoice queued and will retry automatically.",
     });
     setTimeout(() => {
       setScanState("idle");
@@ -342,7 +357,7 @@ export default function TraderApp() {
     }
 
     if (!navigator.onLine) {
-      await queueForLater(file, traderId, options);
+      await queueForLater(file, traderId, options, "offline");
       return;
     }
 
@@ -360,8 +375,12 @@ export default function TraderApp() {
     } catch (err) {
       // Network error or the UPLOAD_TIMEOUT_MS abort firing — either way the
       // photo isn't lost, it goes in the same offline queue a detected
-      // navigator.onLine===false would have used.
-      await queueForLater(file, traderId, options);
+      // navigator.onLine===false would have used. navigator.onLine is
+      // checked again here (not just assumed "failed") because a request
+      // can also fail with the browser correctly reporting online=true the
+      // whole time -- e.g. the backend itself timed out or errored, not the
+      // connection.
+      await queueForLater(file, traderId, options, navigator.onLine ? "failed" : "offline");
     }
   }
 
@@ -690,7 +709,7 @@ export default function TraderApp() {
         ) : activeTab === "home" ? (
           <>
             <div className="mb-2">
-              <VoiceQueryButton summary={summary} />
+              <VoiceQueryButton summary={summary} traderLang={traderLang} />
             </div>
             <div className="mb-2">
               <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Financial Snapshot</h2>

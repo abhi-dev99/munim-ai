@@ -15,7 +15,7 @@ import { matchVoiceIntent, answerVoiceIntent } from "../utils/voiceIntent";
  * recognition (Firefox, many in-app webviews) rather than showing a mic
  * that silently fails when tapped.
  */
-export default function VoiceQueryButton({ summary }) {
+export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
   const [state, setState] = useState("idle"); // idle | listening | answered | error
   const [answer, setAnswer] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -25,6 +25,17 @@ export default function VoiceQueryButton({ summary }) {
     "not-allowed": "Mic permission allow karein settings mein.",
     "no-speech": "Kuch sunai nahi diya, dobara try karein.",
     unsupported: "Ye phone/browser voice input support nahi karta.",
+  };
+
+  // Map 2-letter language code to Web Speech API locale
+  const getRecognitionLocale = (lang) => {
+    const localeMap = {
+      "hi": "hi-IN",
+      "en": "en-IN",
+      "mr": "mr-IN",
+      "gu": "gu-IN",
+    };
+    return localeMap[lang] || "hi-IN";
   };
 
   const handleTap = useCallback(() => {
@@ -38,10 +49,10 @@ export default function VoiceQueryButton({ summary }) {
     setState("listening");
 
     const rec = startListening({
-      lang: "hi-IN",
+      lang: getRecognitionLocale(traderLang),
       onResult: (transcript) => {
-        const { intent } = matchVoiceIntent(transcript);
-        setAnswer(answerVoiceIntent(intent, summary));
+        const { intent } = matchVoiceIntent(transcript, traderLang);
+        setAnswer(answerVoiceIntent(intent, summary, traderLang));
         setState("answered");
       },
       onError: (code) => {
@@ -53,7 +64,7 @@ export default function VoiceQueryButton({ summary }) {
       },
     });
     setRecognition(rec);
-  }, [state, recognition, summary]);
+  }, [state, recognition, summary, traderLang]);
 
   if (!isRecognitionSupported()) return null;
 
