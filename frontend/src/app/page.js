@@ -6,6 +6,19 @@ import { Loader2, ShieldCheck, Zap, Smartphone } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// verify-otp matches the submitted number against a trader's own
+// whatsapp_number first, falling back to a CA's ca_whatsapp_number on any
+// of their clients (see backend/app/api/auth.py) -- it returns whichever
+// trader record matched, with no separate flag saying which path it took.
+// Comparing the last 10 digits (ignoring a "91"/"+91" country-code prefix,
+// same normalization deps.py:verify_trader_access uses) recovers that: a
+// match means this number IS that trader, a mismatch means it only got in
+// via ca_whatsapp_number, i.e. this is the CA logging in to manage a client.
+function last10Digits(phone) {
+  const digits = (phone || "").replace(/\D/g, "");
+  return digits.slice(-10);
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mobileNumber, setMobileNumber] = useState("");
@@ -19,7 +32,11 @@ export default function LoginPage() {
     const token = localStorage.getItem("munim_auth_token");
     const trader = localStorage.getItem("munim_auth_trader");
     if (token && trader) {
-      router.push("/dashboard");
+      // munim_auth_role is set at login time (see handleVerifyOtp) — a
+      // session from before this fix existed won't have it, so default to
+      // the old always-/dashboard behavior rather than guessing.
+      const role = localStorage.getItem("munim_auth_role");
+      router.push(role === "trader" ? "/trader" : "/dashboard");
     } else if (token && !trader) {
       // Orphaned token from a bad logout — clean it up
       localStorage.removeItem("munim_auth_token");
@@ -86,8 +103,12 @@ export default function LoginPage() {
         localStorage.setItem("munim_auth_token", data.token);
       }
 
-      // Success, route to dashboard
-      router.push("/dashboard");
+      // A match on this trader's own whatsapp_number means it's their own
+      // login -> /trader. Otherwise this number only got in via someone
+      // else's ca_whatsapp_number -> it's the CA, route to /dashboard.
+      const isOwnNumber = last10Digits(mobileNumber) === last10Digits(data.trader?.whatsapp_number);
+      localStorage.setItem("munim_auth_role", isOwnNumber ? "trader" : "ca");
+      router.push(isOwnNumber ? "/trader" : "/dashboard");
     } catch (err) {
       setError(err.message);
     } finally {
