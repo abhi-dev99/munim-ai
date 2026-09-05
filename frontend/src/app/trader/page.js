@@ -233,6 +233,7 @@ export default function TraderApp() {
       // Hindi text back — otherwise fall back to English.
       lang: data.diagnosis_hi ? "hi-IN" : "en-IN",
       hsnHint: null,
+      onDevice: false,
     });
     setTimeout(() => {
       setScanState("idle");
@@ -253,6 +254,45 @@ export default function TraderApp() {
         setScanResult((prev) => (prev?.invoiceId === data.invoice_id ? { ...prev, hsnHint: hint } : prev));
       });
     }
+
+    narrateOnDevice(data);
+  }
+
+  // Re-narrates the verdict the backend already computed using the on-device
+  // model (mobile/modules/localLlm.ts via mobile/BRIDGE.md's bridge) instead
+  // of trusting the backend's own Gemini-generated diagnosis_hi/diagnosis_en
+  // text — an offline-capable alternative for that one step only, per
+  // BRIDGE.md. itc_verdict/fraud_result etc. still come entirely from
+  // backend/app/domain/*; this never recomputes or second-guesses them, it
+  // only rephrases what's already decided. Best-effort: a missing
+  // window.MunimNative (not running inside the native shell) or any
+  // narration failure just leaves the backend-provided text in place.
+  function narrateOnDevice(data) {
+    if (typeof window === "undefined" || !window.MunimNative?.isAvailable) return;
+
+    const verdict = {
+      status: data.itc_verdict?.status,
+      itc_amount: data.itc_verdict?.itc_amount,
+      itc_blocked: data.itc_verdict?.itc_blocked,
+      reason: data.itc_verdict?.reason,
+      supplier_name: data.supplier_name,
+    };
+    const lang = data.diagnosis_hi ? "hi" : "en";
+    let text = "";
+    window.MunimNative.explainVerdict(verdict, lang, {
+      onToken: (token) => {
+        text += token;
+        setScanResult((prev) => (prev?.invoiceId === data.invoice_id ? { ...prev, message: text, onDevice: true } : prev));
+      },
+      onDone: (fullText) => {
+        setScanResult((prev) =>
+          prev?.invoiceId === data.invoice_id ? { ...prev, message: fullText, onDevice: true } : prev,
+        );
+      },
+      onError: () => {
+        // Keep whatever backend-provided diagnosis text is already showing.
+      },
+    });
   }
 
   async function queueForLater(file, forTraderId) {
@@ -508,6 +548,12 @@ export default function TraderApp() {
                 )}
                 <p className="text-xs text-[var(--text-secondary)] mt-1">{scanResult.message}</p>
                 <ListenButton text={scanResult.message} lang={scanResult.lang} className="mt-1.5" />
+                {scanResult.onDevice && (
+                  <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-emerald-600 mt-1.5">
+                    <Sparkles size={11} />
+                    Narrated on-device
+                  </p>
+                )}
                 {scanResult.hsnHint && (
                   <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)] mt-1.5">
                     <Sparkles size={11} />
