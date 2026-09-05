@@ -11,7 +11,15 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [copied, setCopied] = useState(false);
+  const [webAppCopied, setWebAppCopied] = useState(false);
   const canvasRef = useRef(null);
+  const webAppCanvasRef = useRef(null);
+
+  // The web-app QR doesn't need a backend round trip at all -- it's just
+  // this deployed frontend's own /trader route, computable the moment the
+  // modal opens. Kept entirely independent of the WhatsApp QR's fetch/error
+  // state below, so one failing never blocks the other.
+  const webAppLink = typeof window !== "undefined" ? `${window.location.origin}/trader` : "";
 
   useEffect(() => {
     if (!isOpen) return;
@@ -30,10 +38,18 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
 
   useEffect(() => {
     if (!deepLink || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, deepLink, { width: 220, margin: 1 }, (err) => {
+    QRCode.toCanvas(canvasRef.current, deepLink, { width: 200, margin: 1 }, (err) => {
       if (err) setErrorMsg("Could not render the QR code.");
     });
   }, [deepLink]);
+
+  useEffect(() => {
+    if (!isOpen || !webAppLink || !webAppCanvasRef.current) return;
+    QRCode.toCanvas(webAppCanvasRef.current, webAppLink, { width: 200, margin: 1 }, () => {
+      // Silently ignore -- the web-app QR is a nice-to-have alongside the
+      // WhatsApp one, not something worth its own error banner.
+    });
+  }, [isOpen, webAppLink]);
 
   if (!isOpen) return null;
 
@@ -44,6 +60,13 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
     navigator.clipboard.writeText(deepLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleWebAppCopy = () => {
+    if (!webAppLink) return;
+    navigator.clipboard.writeText(webAppLink);
+    setWebAppCopied(true);
+    setTimeout(() => setWebAppCopied(false), 1500);
   };
 
   return (
@@ -64,37 +87,62 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
           </button>
         </div>
 
-        <div className="p-6 flex flex-col items-center gap-4">
-          {errorMsg && (
-            <div className="w-full p-3 bg-red-50 text-red-700 text-xs rounded-xl border border-red-200 flex items-center gap-2">
-              <XCircle size={15} />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="h-[220px] w-[220px] bg-gray-100 rounded-xl animate-pulse" />
-          ) : deepLink ? (
-            <>
-              <canvas ref={canvasRef} className="rounded-xl border border-gray-200" />
-              <p className="text-sm font-semibold text-gray-800 text-center">
-                Scan to onboard on WhatsApp
-              </p>
-              {joinCode && (
-                <p className="text-xs text-gray-500 text-center">
-                  Or send <span className="font-mono font-bold text-gray-700">JOIN-{joinCode}</span> to
-                  Munim on WhatsApp manually
+        <div className="p-6 flex flex-col gap-6">
+          {/* Option 1: WhatsApp onboarding -- depends on the backend call above */}
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide self-start">
+              Option 1 — WhatsApp
+            </p>
+            {errorMsg && (
+              <div className="w-full p-3 bg-red-50 text-red-700 text-xs rounded-xl border border-red-200 flex items-center gap-2">
+                <XCircle size={15} />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+            {loading ? (
+              <div className="h-[200px] w-[200px] bg-gray-100 rounded-xl animate-pulse" />
+            ) : deepLink ? (
+              <>
+                <canvas ref={canvasRef} className="rounded-xl border border-gray-200" />
+                <p className="text-sm font-semibold text-gray-800 text-center">
+                  Scan to onboard on WhatsApp
                 </p>
-              )}
-              <button
-                onClick={handleCopy}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors"
-              >
-                {copied ? <Check size={13} className="text-[#10b981]" /> : <Copy size={13} />}
-                <span>{copied ? "Copied!" : "Copy link"}</span>
-              </button>
-            </>
-          ) : null}
+                {joinCode && (
+                  <p className="text-xs text-gray-500 text-center">
+                    Or send <span className="font-mono font-bold text-gray-700">JOIN-{joinCode}</span> to
+                    Munim on WhatsApp manually
+                  </p>
+                )}
+                <button
+                  onClick={handleCopy}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors"
+                >
+                  {copied ? <Check size={13} className="text-[#10b981]" /> : <Copy size={13} />}
+                  <span>{copied ? "Copied!" : "Copy link"}</span>
+                </button>
+              </>
+            ) : null}
+          </div>
+
+          <div className="h-px bg-gray-100 w-full" />
+
+          {/* Option 2: straight to the web app -- computed client-side, no backend call, no WhatsApp needed */}
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide self-start">
+              Option 2 — Web app
+            </p>
+            <canvas ref={webAppCanvasRef} className="rounded-xl border border-gray-200" />
+            <p className="text-sm font-semibold text-gray-800 text-center">
+              Scan to open the Munim web app directly
+            </p>
+            <button
+              onClick={handleWebAppCopy}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors"
+            >
+              {webAppCopied ? <Check size={13} className="text-[#10b981]" /> : <Copy size={13} />}
+              <span>{webAppCopied ? "Copied!" : "Copy link"}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
