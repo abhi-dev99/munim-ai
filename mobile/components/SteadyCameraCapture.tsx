@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
     color: '#aaa',
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'space-between',
   },
   closeButton: {
