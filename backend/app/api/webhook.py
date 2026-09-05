@@ -10,7 +10,7 @@ import uuid
 from fastapi import APIRouter, Request, Response, HTTPException, UploadFile, File, Form, Depends
 import asyncio
 
-from app.api.deps import get_current_trader_id
+from app.api.deps import get_current_trader_id, verify_trader_access
 from app.config import get_settings
 from app.services import whatsapp
 from app.services.redis_cache import (
@@ -59,8 +59,12 @@ async def upload_invoice_direct(
     Direct invoice upload from the Trader PWA (no WhatsApp).
     Accepts image or PDF, runs the full LangGraph pipeline, returns diagnosis.
     """
-    if trader_id != current_trader_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    # Reuse the same CA-on-behalf-of-client check every other trader-scoped
+    # endpoint uses (deps.py:verify_trader_access) instead of a raw equality
+    # check -- a raw check rejects the CA uploading for a client trader even
+    # though dashboard.py/gstr2b.py/reports.py all already allow exactly that
+    # via ca_whatsapp_number matching.
+    await verify_trader_access(trader_id, current_trader_id)
 
     if not check_rate_limit(f"upload:{current_trader_id}", max_requests=10, window_seconds=60):
         raise HTTPException(status_code=429, detail="Too many upload requests. Please wait a minute.")
