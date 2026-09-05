@@ -292,8 +292,34 @@ export default function TraderApp() {
     }
   }
 
+  // Uses the native shell's motion-gated camera (mobile/components/
+  // SteadyCameraCapture.tsx, via mobile/BRIDGE.md's capturePhoto bridge)
+  // when available -- it auto-captures only once the phone has actually
+  // held still, instead of the OS camera app's plain manual shutter, which
+  // has no way to know or care whether the shot came out blurry. Falls back
+  // to the OS file/camera picker in a plain browser (window.MunimNative
+  // doesn't exist there) or if the native capture itself genuinely fails
+  // (not on a trader-initiated cancel, which just does nothing).
   function triggerScan() {
+    if (typeof window !== "undefined" && window.MunimNative?.isAvailable) {
+      window.MunimNative.capturePhoto({
+        onCaptured: (base64, mimeType) => {
+          handleFileSelected(base64ToFile(base64, mimeType, `invoice_${Date.now()}.jpg`));
+        },
+        onError: (message) => {
+          if (message !== "cancelled") fileInputRef.current?.click();
+        },
+      });
+      return;
+    }
     fileInputRef.current?.click();
+  }
+
+  function base64ToFile(base64, mimeType, filename) {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    return new File([new Uint8Array(byteNumbers)], filename, { type: mimeType });
   }
 
   // Gate: run the on-device blur/glare check before this file ever reaches
@@ -604,7 +630,7 @@ export default function TraderApp() {
               <button
                 onClick={() => {
                   setRetakePrompt(null);
-                  fileInputRef.current?.click();
+                  triggerScan();
                 }}
                 className="w-full py-3 rounded-none bg-black text-white font-bold text-sm hover:bg-gray-800 transition-colors"
               >
