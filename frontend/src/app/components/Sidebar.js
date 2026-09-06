@@ -156,14 +156,14 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
               onClick={() => { onTabChange(item.id); onMobileClose(); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 text-sm font-semibold ${
                 isActive
-                  ? "bg-[#10b981] text-white shadow-sm"
+                  ? "bg-black text-white"
                   : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
               }`}
             >
               <Icon size={18} />
               <span>{item.label}</span>
               {item.badge > 0 && (
-                <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? "bg-white text-[#10b981]" : "bg-red-500 text-white"}`}>
+                <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? "bg-white text-black" : "bg-red-500 text-white"}`}>
                   {item.badge}
                 </span>
               )}
@@ -191,7 +191,7 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
           {deadlines.length === 0 ? (
             <p className="text-xs text-gray-400 py-1">No upcoming deadlines this month.</p>
           ) : deadlines.map((d, i) => (
-            <div key={i} className={`flex items-center justify-between rounded-lg px-3 py-2 border ${d.daysLeft <= 3 ? "bg-red-50 border-red-100" : "bg-gray-50 border-gray-100"}`}>
+            <div key={i} className={`flex items-center justify-between rounded-none px-3 py-2 border ${d.daysLeft <= 3 ? "bg-red-50 border-red-100" : "bg-gray-50 border-gray-100"}`}>
               <div>
                 <p className={`text-xs font-bold ${d.daysLeft <= 3 ? "text-red-800" : "text-gray-900"}`}>{d.label}</p>
                 <p className={`text-[10px] ${d.daysLeft <= 3 ? "text-red-500" : "text-gray-400"}`}>{d.day} {monthName}</p>
@@ -210,7 +210,7 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
           <TrendingUp size={11} />
           {t("sb_itc_trend")}
         </p>
-        <div className="bg-gray-50 rounded-lg border border-gray-100 py-2">
+        <div className="bg-gray-50 rounded-none border border-gray-100 py-2">
           <MiniSparkline data={itcData} />
           <div className="flex justify-between px-2 mt-1">
             {(itcData.length ? itcData.slice(-6) : [...Array(6)].map((_, i) => ({ label: ["F","M","A","M","J","J"][i] }))).map((d, i) => (
@@ -224,7 +224,7 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
 
       {/* WhatsApp Alerts */}
       <div className="px-4 py-3 flex-none">
-        <div className="bg-gray-50 rounded-lg border border-gray-100 p-3 space-y-2">
+        <div className="bg-gray-50 rounded-none border border-gray-100 p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-full bg-[#25D366] text-white flex items-center justify-center">
@@ -284,7 +284,7 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
       <div className="px-4 pb-2 flex-none space-y-1.5">
         <button
           onClick={() => router.push("/dev")}
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-xs font-bold ${pathname === "/dev" ? "bg-emerald-50 text-[#10b981]" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-xs font-bold ${pathname === "/dev" ? "bg-gray-100 text-black" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
         >
           <TrendingUp size={14} className="text-[#10b981]" />
           <span>System Diagnostics</span>
@@ -302,9 +302,9 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
 
       {/* Take Tour */}
       <div className="px-4 pb-2 flex-none">
-        <button 
-          onClick={onTourClick} 
-          className="flex items-center justify-center w-full px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors shadow-sm"
+        <button
+          onClick={onTourClick}
+          className="flex items-center justify-center w-full px-3 py-2 bg-[var(--blue-glow)] text-[var(--blue-primary)] rounded-lg text-sm font-semibold hover:opacity-80 transition-colors"
         >
           Take Tour
         </button>
@@ -315,7 +315,7 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
         <button
           id="sidebar-my-profile"
             onClick={() => { router.push("/dashboard/profile"); onMobileClose(); }}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors w-full text-sm font-semibold ${pathname === "/dashboard/profile" ? "bg-emerald-50 text-emerald-600 font-bold" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors w-full text-sm font-semibold ${pathname === "/dashboard/profile" ? "bg-gray-100 text-black font-bold" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
         >
           <div className="w-7 h-7 rounded-full bg-[#10b981] text-white flex items-center justify-center font-bold text-[11px]">
             {authName}
@@ -331,10 +331,11 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
       {/* Sign Out */}
       <div className="px-4 pb-4 flex-none border-t border-gray-100 pt-2">
         <button
-          onClick={() => { 
-            localStorage.removeItem("munim_auth_trader"); 
-            localStorage.removeItem("munim_auth_token"); 
-            window.location.href = "/"; 
+          onClick={() => {
+            localStorage.removeItem("munim_auth_trader");
+            localStorage.removeItem("munim_auth_token");
+            localStorage.removeItem("munim_auth_role");
+            window.location.href = "/";
           }}
           className="flex items-center gap-3 px-3 py-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors w-full text-sm"
         >

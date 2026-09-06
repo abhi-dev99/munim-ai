@@ -7,7 +7,7 @@ import { matchHSN, prewarmHSNMatcher } from "@/src/app/utils/hsnMatch";
 
 
 import { useState, useEffect, useRef } from "react";
-import { Menu, Camera, FileText, CheckCircle2, ShieldAlert, CloudOff, X, Loader2, Home, BarChart2, ChevronRight, Upload, Sparkles } from "lucide-react";
+import { Menu, Camera, FileText, CheckCircle2, ShieldAlert, CloudOff, X, Loader2, Home, BarChart2, ChevronRight, LogOut, Sparkles } from "lucide-react";
 import MoneyMeter from "../components/MoneyMeter";
 import ActionQueue from "../components/ActionQueue";
 import InvoiceDetailModal from "../components/InvoiceDetailModal";
@@ -630,13 +630,22 @@ export default function TraderApp() {
               ))}
             </nav>
 
-            {/* Upload invoice from sidebar */}
+            {/* Sign out -- the "Upload Invoice" button that used to live here
+                duplicated the main Scan Invoice action already available
+                from the bottom nav bar; this drawer had no way to log out
+                at all, unlike the CA dashboard's sidebar, which already has
+                one. */}
             <div className="p-4 border-t border-[var(--border-subtle)]">
               <button
-                onClick={() => { setSidebarOpen(false); fileInputRef.current?.click(); }}
+                onClick={() => {
+                  localStorage.removeItem("munim_auth_trader");
+                  localStorage.removeItem("munim_auth_token");
+                  localStorage.removeItem("munim_auth_role");
+                  window.location.href = "/";
+                }}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-black text-white font-bold text-sm hover:bg-gray-800 transition-colors"
               >
-                <Upload size={16} /> Upload Invoice
+                <LogOut size={16} /> Log Out
               </button>
             </div>
           </div>
