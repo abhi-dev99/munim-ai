@@ -65,8 +65,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "b2ecfb42-0ef0-4a51-a671-a9c8b34c0f8f"
+        "projectId": "182a85fb-0866-4194-88db-fcc8bb232d12"
       }
-    }
+    },
+    "owner": "abhi-dev99"
   }
 }

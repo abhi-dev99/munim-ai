@@ -23,7 +23,8 @@
 
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Animated, Platform, Pressable, SafeAreaView, StyleSheet, Text, View, StatusBar as RNStatusBar } from 'react-native'
+import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 import * as LocalAuthentication from 'expo-local-authentication'
 import * as Notifications from 'expo-notifications'
@@ -71,13 +72,35 @@ type ViewMode = 'trader' | 'dashboard'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  )
+}
+
+/**
+ * useSafeAreaInsets() (react-native-safe-area-context) replaces a hand-rolled
+ * `paddingTop: RNStatusBar.currentHeight` guess that a real device test
+ * showed wasn't reliable -- react-native core's own SafeAreaView is
+ * iOS-only in practice (a well-known, long-standing limitation; it's a
+ * no-op on Android), and RNStatusBar.currentHeight can read back
+ * `undefined` before the native module has settled on some Android
+ * configurations, silently collapsing the padding to 0 -- which is exactly
+ * what put the Trader/CA switcher tabs up under the status bar, unreadable
+ * and unclickable. This hook asks Android/iOS for the real, measured inset
+ * instead of guessing it.
+ */
+function AppContent() {
+  const insets = useSafeAreaInsets()
   const webviewRef = useRef<WebView>(null)
   const [modelStatus, setModelStatus] = useState<ModelProgress>({ status: 'idle' })
   // Populated once loadModel() actually resolves — real backend info (e.g.
@@ -230,7 +253,7 @@ export default function App() {
   const injectedJavaScriptBeforeContentLoaded = getInjectedJavaScriptBeforeLoad(PLATFORM)
 
   return (
-    <View style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: insets.top }]}>
       <StatusBar style="dark" />
       <View style={styles.viewSwitcher}>
         <Pressable
@@ -386,7 +409,9 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
-    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 54, // Fixed padding for iOS dynamic islands/notches when SafeAreaView fails
+    // paddingTop is applied inline from useSafeAreaInsets() above, not here --
+    // see AppContent's own comment for why a static/computed guess isn't
+    // reliable enough for this specific bug.
   },
   webview: {
     flex: 1,
