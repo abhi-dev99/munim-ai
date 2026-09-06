@@ -761,7 +761,7 @@ export default function TraderApp() {
         ) : activeTab === "home" ? (
           <>
             <div className="mb-2">
-              <VoiceQueryButton summary={summary} traderLang={traderLang} />
+              <VoiceQueryButton traderLang={traderLang} traderId={traderId} />
             </div>
             <div className="mb-2">
               <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Financial Snapshot</h2>

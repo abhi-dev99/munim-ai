@@ -26,6 +26,22 @@ export const transcribeAudio = async (apiBase, blob) => {
   return data.text || "";
 };
 
+// Sends a transcribed voice (or future typed) question to the same
+// LLM-backed answer engine WhatsApp's text/voice queries already use
+// (backend/app/services/gemini.py::answer_trader_question, via the new
+// /dashboard/ask/{traderId} endpoint) -- real, flexible answers instead of
+// utils/voiceIntent.js's fixed 3-intent local matcher.
+export const askTraderQuestion = async (apiBase, traderId, question) => {
+  const res = await authFetch(`${apiBase}/api/v1/dashboard/ask/${traderId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!res.ok) throw new Error("Ask failed");
+  const data = await res.json();
+  return data.answer || "";
+};
+
 export const authFetch = async (url, options = {}) => {
   options.cache = 'no-store';
   if (typeof window !== 'undefined') {

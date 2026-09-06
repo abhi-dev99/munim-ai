@@ -640,6 +640,79 @@ def _generate_short_code(db, length: int = 6) -> str:
     raise RuntimeError("Could not generate a unique short_code after 5 attempts")
 
 
+class AskQuestionModel(BaseModel):
+    question: str
+
+
+@router.post("/ask/{trader_id}")
+async def ask_trader_question(
+    payload: AskQuestionModel,
+    trader_id: str = Depends(verify_trader_access),
+):
+    """
+    Real-answer backend for the trader PWA's voice-query button (and usable
+    for a future typed-question box too) -- reuses the exact same
+    LLM-backed answer function WhatsApp's text/voice query handling already
+    calls (webhook.py's _answer_general_query -> gemini.py's
+    answer_trader_question), rather than the PWA's own separate
+    VoiceQueryButton.js / utils/voiceIntent.js, which only recognizes three
+    fixed question shapes by design (see that file's own header comment) --
+    fine for "no network call" but the reason it felt broken against
+    anything else, next to WhatsApp's much more flexible answer.
+
+    Deadline-math duplicated from webhook.py's _answer_general_query rather
+    than shared, matching that function's own stated reasoning: keeping
+    this endpoint from ever risking a change to the live WhatsApp handler.
+    """
+    from datetime import date
+    from app.services.supabase_client import get_itc_summary, get_recent_invoices
+    from app.services.gemini import answer_trader_question
+
+    language_pref = "hi"  # safe default -- overwritten below once the real
+                          # trader row is fetched, but the except block
+                          # needs something to fall back on even if that
+                          # fetch itself is what fails.
+    try:
+        db = get_supabase()
+        trader_res = db.table("traders").select("business_name, language_pref").eq("id", trader_id).execute()
+        trader_row = trader_res.data[0] if trader_res.data else {}
+        language_pref = trader_row.get("language_pref", "hi")
+
+        buckets = await get_itc_summary(trader_id)
+        recent = await get_recent_invoices(trader_id, limit=3)
+
+        today = date.today()
+        if today.day <= 11:
+            next_filing_type, deadline_day = "GSTR-1", 11
+        else:
+            next_filing_type, deadline_day = "GSTR-3B", 20
+        days_remaining = deadline_day - today.day
+
+        context_data = {
+            "business_name": trader_row.get("business_name"),
+            "itc_summary_totals": buckets,
+            "recent_invoices": recent,
+            "next_filing_deadline": {
+                "filing_type": next_filing_type,
+                "deadline_day_of_month": deadline_day,
+                "days_remaining": days_remaining,
+            },
+        }
+        answer = await answer_trader_question(payload.question, context_data, language_pref)
+        if not answer or not answer.strip():
+            raise ValueError("answer_trader_question returned an empty answer")
+        return {"answer": answer}
+    except Exception as e:
+        logger.error(f"ask_trader_question failed for {trader_id}: {e}")
+        fallback = {
+            "hi": "Kuch dikkat aa gayi, kripya dubara try karein.",
+            "en": "Something went wrong, please try again.",
+            "mr": "काहीतरी चूक झाली, कृपया पुन्हा प्रयत्न करा.",
+            "gu": "કંઈક ખોટું થયું, કૃપા કરી ફરી પ્રયાસ કરો.",
+        }
+        return {"answer": fallback.get(language_pref, fallback["hi"])}
+
+
 class PushTokenModel(BaseModel):
     token: str
 

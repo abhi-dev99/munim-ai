@@ -3,16 +3,23 @@
 import { useState, useCallback, useRef } from "react";
 import { Mic, MicOff, Loader2 } from "lucide-react";
 import { isRecordingSupported, startRecording, stopRecording } from "../utils/voiceRecording";
-import { transcribeAudio } from "../utils/api";
-import { matchVoiceIntent, answerVoiceIntent } from "../utils/voiceIntent";
+import { transcribeAudio, askTraderQuestion } from "../utils/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /**
- * "Ask Munim" — voice query for a trader's own dashboard summary.
- * Tap the mic, ask something like "mera ITC kitna bacha hai", get an
- * instant answer from data already loaded on this page (see
- * utils/voiceIntent.js's answerVoiceIntent).
+ * "Ask Munim" — voice query for a trader's own account.
+ * Tap the mic, ask anything about ITC, invoices, suppliers, or GST
+ * deadlines — answered by the same LLM-backed answer engine WhatsApp's own
+ * text/voice queries already use (backend/app/services/gemini.py's
+ * answer_trader_question, via POST /dashboard/ask/{traderId}), not
+ * utils/voiceIntent.js's old local matcher. That matcher only ever
+ * recognized 3 fixed question shapes by design (see its own header
+ * comment) -- fine for a fast, no-network answer to exactly those 3
+ * things, but it's the reason this button felt broken against anything
+ * else, next to WhatsApp's much more flexible answer to the same kind of
+ * question. Consistency won out over shaving a network round trip off the
+ * 3 cases the old matcher covered.
  *
  * Recording is getUserMedia/MediaRecorder based (utils/voiceRecording.js),
  * not the Web Speech API -- the mobile app embeds this page inside a React
@@ -21,13 +28,12 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
  * via the same Groq Whisper call webhook.py's WhatsApp voice-note handler
  * already uses (utils/api.js's transcribeAudio -> POST
  * /dashboard/transcribe-audio) -- one transcription implementation, two
- * input transports. Everything after getting a transcript (intent matching,
- * the answer itself) is unchanged from before.
+ * input transports.
  *
  * Renders nothing if the browser/WebView doesn't support audio recording at
  * all, rather than showing a mic that silently fails when tapped.
  */
-export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
+export default function VoiceQueryButton({ traderLang = "hi", traderId }) {
   const [state, setState] = useState("idle"); // idle | listening | transcribing | answered | error
   const [answer, setAnswer] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -60,8 +66,10 @@ export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
           setState("error");
           return;
         }
-        const { intent } = matchVoiceIntent(transcript, traderLang);
-        setAnswer(answerVoiceIntent(intent, summary, traderLang));
+        const response = traderId
+          ? await askTraderQuestion(API_BASE, traderId, transcript)
+          : "";
+        setAnswer(response || ERROR_MESSAGES["transcription-failed"]);
         setState("answered");
       } catch (err) {
         // Real error text appended in brackets -- deliberately visible, not
@@ -85,7 +93,7 @@ export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
       },
     });
     recorderRef.current = recorder;
-  }, [state, summary, traderLang]);
+  }, [state, traderId, traderLang]);
 
   if (!isRecordingSupported()) return null;
 
