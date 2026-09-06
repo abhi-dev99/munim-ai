@@ -90,7 +90,14 @@ window.MunimNative: {
   // capture="environment">` OS-camera-handoff for the native shell only —
   // that file input still exists and still works unmodified in a plain
   // browser, where window.MunimNative doesn't exist at all.
-  capturePhoto(callbacks: CaptureCallbacks): string;
+  // `lang` (e.g. "hi"/"en"/"mr"/"gu") is optional -- it controls only the
+  // native capture screen's own fixed strings ("Hold steady...", the
+  // review screen's Retake/Use buttons), not a general language switch.
+  // Pass the trader's real language_pref if the caller has it; defaults to
+  // Hindi if omitted. The screen also now shows the captured photo on a
+  // review step (Retake / Use this photo) before onCaptured fires, instead
+  // of sending it onward immediately.
+  capturePhoto(callbacks: CaptureCallbacks, lang?: string): string;
 
   // Asks the OS for a Face ID / Touch ID / Android fingerprint prompt to
   // confirm a sensitive action — today, dismissing a FRAUD_FLAGGED scan

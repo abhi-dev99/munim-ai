@@ -112,6 +112,10 @@ function AppContent() {
   // Set while the web page has an in-flight MUNIM_CAPTURE_PHOTO_REQUEST —
   // shows the motion-gated camera screen full-screen over the WebView.
   const [captureRequestId, setCaptureRequestId] = useState<string | null>(null)
+  // Trader's real language_pref, forwarded from trader/page.js's own
+  // MUNIM_CAPTURE_PHOTO_REQUEST call -- controls only this capture screen's
+  // fixed strings, not a general app-wide language switch.
+  const [captureLang, setCaptureLang] = useState<string | undefined>(undefined)
   // Opens the honest sensor-diagnostics screen (see its own header comment
   // for why this is a showcase, not a feature). Native-triggered only -- the
   // web page has no way to open this and doesn't need one.
@@ -233,7 +237,10 @@ function AppContent() {
   }, []); // Register once per app session -- no view-switch concept to retrigger on any more
 
   useEffect(() => {
-    setCaptureRequestHandler((requestId) => setCaptureRequestId(requestId))
+    setCaptureRequestHandler((requestId, lang) => {
+      setCaptureRequestId(requestId)
+      setCaptureLang(lang)
+    })
     return () => setCaptureRequestHandler(null)
   }, [])
 
@@ -295,7 +302,7 @@ function AppContent() {
       ) : null}
       {captureRequestId ? (
         <View style={StyleSheet.absoluteFill}>
-          <SteadyCameraCapture onCaptured={handleCaptured} onCancel={handleCaptureCancel} />
+          <SteadyCameraCapture onCaptured={handleCaptured} onCancel={handleCaptureCancel} lang={captureLang} />
         </View>
       ) : null}
       {sensorsScreenOpen ? (

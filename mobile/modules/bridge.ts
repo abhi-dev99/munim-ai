@@ -29,7 +29,7 @@ import { explainVerdict, type Lang, type Verdict } from './localLlm'
 export type WebToNativeMessage =
   | { type: 'MUNIM_EXPLAIN_VERDICT_REQUEST'; requestId: string; verdict: Verdict; lang: Lang }
   | { type: 'MUNIM_CANCEL_REQUEST'; requestId: string }
-  | { type: 'MUNIM_CAPTURE_PHOTO_REQUEST'; requestId: string }
+  | { type: 'MUNIM_CAPTURE_PHOTO_REQUEST'; requestId: string; lang?: string }
   | { type: 'MUNIM_BIOMETRIC_REQUEST'; requestId: string }
   | { type: 'MUNIM_BRIDGE_READY' }
 
@@ -87,7 +87,7 @@ export function broadcastStatus(webview: WebView | null, event: StatusEvent): vo
 // registers a handler here once on mount that shows/hides that screen, and
 // calls sendCapturePhotoResult/sendCapturePhotoError below once the screen
 // resolves.
-type CaptureRequestHandler = (requestId: string) => void
+type CaptureRequestHandler = (requestId: string, lang?: string) => void
 let captureRequestHandler: CaptureRequestHandler | null = null
 
 export function setCaptureRequestHandler(handler: CaptureRequestHandler | null): void {
@@ -153,7 +153,7 @@ export async function handleBridgeMessage(rawData: string, webview: WebView | nu
 
   if (message.type === 'MUNIM_CAPTURE_PHOTO_REQUEST') {
     if (captureRequestHandler) {
-      captureRequestHandler(message.requestId)
+      captureRequestHandler(message.requestId, message.lang)
     } else {
       sendCapturePhotoError(webview, message.requestId, 'Camera capture is not available right now.')
     }
@@ -325,10 +325,14 @@ export function getInjectedJavaScriptBeforeLoad(platform: 'ios' | 'android'): st
     // own cancel (X) button, which arrives here as onError with a
     // "cancelled" message rather than a separate callback -- one failure
     // path for the web side to handle instead of two.
-    capturePhoto: function (callbacks) {
+    // lang (e.g. "hi"/"en"/"mr"/"gu") is optional and controls only the
+    // capture screen's own fixed strings ("Hold steady...", etc) -- pass the
+    // trader's real language_pref if the caller has it (trader/page.js
+    // already fetches it into traderLang), defaults to Hindi if omitted.
+    capturePhoto: function (callbacks, lang) {
       var requestId = genId();
       pending[requestId] = callbacks || {};
-      send({ type: 'MUNIM_CAPTURE_PHOTO_REQUEST', requestId: requestId });
+      send({ type: 'MUNIM_CAPTURE_PHOTO_REQUEST', requestId: requestId, lang: lang });
       return requestId;
     },
 
