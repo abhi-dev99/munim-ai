@@ -23,7 +23,7 @@
 
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Animated, BackHandler, Platform, Pressable, StyleSheet, Text, ToastAndroid, View } from 'react-native'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview'
 import * as LocalAuthentication from 'expo-local-authentication'
@@ -133,8 +133,13 @@ function AppContent() {
   // a single page's load, not just on actual URL changes) -- only the
   // transition INTO /dashboard from somewhere else should trigger it.
   const wasOnDashboard = useRef(false)
+  // Mirrors WebViewNavigation.canGoBack -- read by the hardware-back-button
+  // handler below without needing it in React state (it changes on every
+  // navigation event, far more often than a re-render is worth).
+  const canGoBackRef = useRef(false)
 
   const onNavigationStateChange = useCallback(async (navState: WebViewNavigation) => {
+    canGoBackRef.current = navState.canGoBack
     let path = '/'
     try {
       path = new URL(navState.url).pathname
@@ -268,6 +273,44 @@ function AppContent() {
       })
     return unsubscribe
   }, [forwardStatus])
+
+  // Android hardware/gesture back button. Without this, BackHandler's
+  // default (no listener registered) exits the whole app on a single back
+  // press regardless of where the trader is -- inside the camera screen,
+  // three levels deep in the dashboard, anywhere. Priority order: close a
+  // full-screen native overlay first if one's open, then let the WebView
+  // navigate its own history back (it owns routing entirely now, see
+  // onNavigationStateChange's own comment above), and only once there's
+  // nowhere left to go does this become "press back again to exit."
+  const lastBackPressRef = useRef(0)
+  useEffect(() => {
+    if (Platform.OS !== 'android') return
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (sensorsScreenOpen) {
+        setSensorsScreenOpen(false)
+        return true
+      }
+      if (captureRequestId) {
+        handleCaptureCancel()
+        return true
+      }
+      if (canGoBackRef.current) {
+        webviewRef.current?.goBack()
+        return true
+      }
+      const now = Date.now()
+      if (now - lastBackPressRef.current < 2000) {
+        BackHandler.exitApp()
+        return true
+      }
+      lastBackPressRef.current = now
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT)
+      return true
+    })
+
+    return () => subscription.remove()
+  }, [sensorsScreenOpen, captureRequestId, handleCaptureCancel])
 
   const injectedJavaScriptBeforeContentLoaded = getInjectedJavaScriptBeforeLoad(PLATFORM)
 

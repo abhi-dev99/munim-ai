@@ -59,6 +59,21 @@ import { setPendingCaptureLocation } from '../modules/bridge'
 // tilting it), acceleration alone misses tilt/rotation blur.
 const ROTATION_THRESHOLD_DEG_PER_S = 12
 const ACCELERATION_THRESHOLD_MS2 = 0.3
+// The motion gate only ever asks "is the phone physically still right now"
+// -- it has no idea what's actually in frame, because this screen does no
+// image/document detection at all (see the file header). A real-device test
+// showed the honest consequence of that: leaving the phone resting on a
+// table auto-"captured" whatever the lens happened to be pointed at (a
+// watch, the tabletop) the moment the screen opened, since a motionless
+// phone is trivially "steady" from frame one. This threshold requires at
+// least one sample of real, deliberate motion -- clearly above sensor
+// noise while sitting still -- before the steady-gate is even evaluated,
+// so a phone that was already motionless when the screen opened can't
+// auto-capture until it's actually been picked up and pointed somewhere.
+// It doesn't know THAT "somewhere" is an invoice either -- no threshold on
+// this signal alone can -- but it does close the specific failure mode
+// observed: capturing before the trader ever moved the phone at all.
+const MOVEMENT_ARM_THRESHOLD_MS2 = 1.5
 // How long the signal must stay under both thresholds, continuously,
 // before auto-capture fires -- long enough to filter out a momentary dip
 // between shakes, short enough not to feel like a hang.
@@ -163,6 +178,11 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
   const [reviewPhoto, setReviewPhoto] = useState<CapturedPhoto | null>(null)
   const steadySinceRef = useRef<number | null>(null)
   const capturingRef = useRef(false)
+  // See MOVEMENT_ARM_THRESHOLD_MS2's comment -- false until the phone has
+  // shown real motion since this screen (re)armed, so a phone that was
+  // already resting motionless can't immediately "steady" on whatever it
+  // happens to be pointed at.
+  const hasMovedRef = useRef(false)
   // Whatever the best-effort location request below has resolved by the
   // time a capture actually fires -- null until (if ever) a fix arrives.
   const locationRef = useRef<{ latitude: number; longitude: number } | null>(null)
@@ -232,6 +252,10 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
     zoomAnim.setValue(0)
     steadySinceRef.current = null
     capturingRef.current = false
+    // Re-arm the movement gate too -- otherwise a phone that hasn't moved
+    // since the first (bad) capture would immediately re-trigger on
+    // whatever it's still pointed at, defeating the point of Retake.
+    hasMovedRef.current = false
     setCapturing(false)
     setSteady(false)
   }, [zoomAnim])
@@ -287,6 +311,17 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
       const accelerationMagnitude = Math.sqrt(
         acceleration.x * acceleration.x + acceleration.y * acceleration.y + acceleration.z * acceleration.z,
       )
+
+      if (!hasMovedRef.current) {
+        if (accelerationMagnitude > MOVEMENT_ARM_THRESHOLD_MS2) {
+          hasMovedRef.current = true
+        } else {
+          steadySinceRef.current = null
+          setSteady(false)
+          return
+        }
+      }
+
       const isSteadyNow =
         rotationMagnitude < ROTATION_THRESHOLD_DEG_PER_S && accelerationMagnitude < ACCELERATION_THRESHOLD_MS2
 
@@ -328,29 +363,6 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
     )
   }
 
-  if (reviewPhoto) {
-    return (
-      <View style={styles.container}>
-        <Image
-          source={{ uri: `data:${reviewPhoto.mimeType};base64,${reviewPhoto.base64}` }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="contain"
-        />
-        <View style={styles.reviewOverlay} pointerEvents="box-none">
-          <Text style={styles.reviewTitle}>{strings.reviewTitle}</Text>
-          <View style={styles.reviewButtonRow}>
-            <Pressable onPress={handleRetake} style={styles.reviewButtonSecondary}>
-              <Text style={styles.reviewButtonSecondaryText}>{strings.retake}</Text>
-            </Pressable>
-            <Pressable onPress={handleUsePhoto} style={styles.reviewButtonPrimary}>
-              <Text style={styles.reviewButtonPrimaryText}>{strings.usePhoto}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    )
-  }
-
   // Zooms the whole camera view in toward the guide frame's center on
   // capture -- a plain scale transform on the CameraView's container, not a
   // real optical/digital crop of what's being recorded (takePictureAsync
@@ -361,38 +373,74 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
   const bracketOpacity = zoomAnim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] })
   const bracketColor = steady || capturing ? '#34C759' : '#ffffff'
 
+  // CameraView is mounted exactly once for this whole screen's lifetime --
+  // it used to live inside an `if (reviewPhoto) return (...)` branch that
+  // rendered a completely different tree without it, so accepting a photo
+  // and then retaking unmounted and remounted the camera. A real-device
+  // test showed that reliably left the preview blank (a known category of
+  // flakiness re-acquiring Android camera hardware right after releasing
+  // it). The review UI is now just an overlay drawn on top of the still-
+  // running camera, toggled with `reviewPhoto`, never touching CameraView's
+  // own mount state.
   return (
     <View style={styles.container}>
       <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ scale: cameraScale }] }]}>
         <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
       </Animated.View>
 
+      {reviewPhoto ? (
+        <Image
+          source={{ uri: `data:${reviewPhoto.mimeType};base64,${reviewPhoto.base64}` }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="contain"
+        />
+      ) : null}
+
       <View style={styles.overlay} pointerEvents="box-none">
         <Pressable onPress={onCancel} style={styles.closeButton}>
           <Text style={styles.closeButtonText}>✕</Text>
         </Pressable>
 
-        {/* Fixed guide rectangle -- "put the invoice roughly here", not a
-            detected document boundary. Four independent corner brackets
-            (two short bars each) rather than a full border, matching the
-            scanner-app convention of marking corners only. */}
-        <View style={styles.guideFrame} pointerEvents="none">
-          <Animated.View style={[styles.corner, styles.cornerTopLeft, { opacity: bracketOpacity, borderColor: bracketColor }]} />
-          <Animated.View style={[styles.corner, styles.cornerTopRight, { opacity: bracketOpacity, borderColor: bracketColor }]} />
-          <Animated.View style={[styles.corner, styles.cornerBottomLeft, { opacity: bracketOpacity, borderColor: bracketColor }]} />
-          <Animated.View style={[styles.corner, styles.cornerBottomRight, { opacity: bracketOpacity, borderColor: bracketColor }]} />
-        </View>
+        {!reviewPhoto && (
+          <>
+            {/* Fixed guide rectangle -- "put the invoice roughly here", not
+                a detected document boundary. Four independent corner
+                brackets (two short bars each) rather than a full border,
+                matching the scanner-app convention of marking corners
+                only. */}
+            <View style={styles.guideFrame} pointerEvents="none">
+              <Animated.View style={[styles.corner, styles.cornerTopLeft, { opacity: bracketOpacity, borderColor: bracketColor }]} />
+              <Animated.View style={[styles.corner, styles.cornerTopRight, { opacity: bracketOpacity, borderColor: bracketColor }]} />
+              <Animated.View style={[styles.corner, styles.cornerBottomLeft, { opacity: bracketOpacity, borderColor: bracketColor }]} />
+              <Animated.View style={[styles.corner, styles.cornerBottomRight, { opacity: bracketOpacity, borderColor: bracketColor }]} />
+            </View>
 
-        <View style={styles.bottomBar}>
-          <View style={[styles.statusPill, steady ? styles.statusPillSteady : styles.statusPillUnsteady]}>
-            <Text style={styles.statusText}>
-              {capturing ? strings.capturing : steady ? strings.steadyCapturing : strings.holdSteady}
-            </Text>
+            <View style={styles.bottomBar}>
+              <View style={[styles.statusPill, steady ? styles.statusPillSteady : styles.statusPillUnsteady]}>
+                <Text style={styles.statusText}>
+                  {capturing ? strings.capturing : steady ? strings.steadyCapturing : strings.holdSteady}
+                </Text>
+              </View>
+              <Pressable onPress={capture} style={styles.manualButton} disabled={capturing}>
+                <Text style={styles.manualButtonText}>{capturing ? '…' : strings.captureNow}</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+
+        {reviewPhoto && (
+          <View style={styles.reviewOverlay} pointerEvents="box-none">
+            <Text style={styles.reviewTitle}>{strings.reviewTitle}</Text>
+            <View style={styles.reviewButtonRow}>
+              <Pressable onPress={handleRetake} style={styles.reviewButtonSecondary}>
+                <Text style={styles.reviewButtonSecondaryText}>{strings.retake}</Text>
+              </Pressable>
+              <Pressable onPress={handleUsePhoto} style={styles.reviewButtonPrimary}>
+                <Text style={styles.reviewButtonPrimaryText}>{strings.usePhoto}</Text>
+              </Pressable>
+            </View>
           </View>
-          <Pressable onPress={capture} style={styles.manualButton} disabled={capturing}>
-            <Text style={styles.manualButtonText}>{capturing ? '…' : strings.captureNow}</Text>
-          </Pressable>
-        </View>
+        )}
       </View>
     </View>
   )
