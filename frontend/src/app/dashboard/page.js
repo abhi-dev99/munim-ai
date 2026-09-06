@@ -294,6 +294,15 @@ export default function Home() {
   const [actionCount, setActionCount] = useState(0);
   const [showGeminiModal, setShowGeminiModal] = useState(false);
   const [showOnboardModal, setShowOnboardModal] = useState(false);
+  // Same feature-detection trader/page.js's triggerScan() already uses --
+  // window.MunimNative only exists inside the native app's WebView (see
+  // mobile/modules/bridge.ts), never in a plain browser tab. The GST Portal
+  // button opens an external-site mockup in a new tab, which doesn't apply
+  // inside a WebView shell at all -- there's no "new tab" to open it into.
+  const [isNativeApp, setIsNativeApp] = useState(false);
+  useEffect(() => {
+    setIsNativeApp(typeof window !== "undefined" && window.MunimNative?.isAvailable === true);
+  }, []);
   const [geminiStatus, setGeminiStatus] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -654,17 +663,23 @@ export default function Home() {
                 <span className="hidden sm:inline text-sm font-semibold text-gray-800">Onboard Trader</span>
               </button>
 
-              {/* GST Portal button — opens the GST portal mockup for IMS + GSTR-3B filing */}
-              <a
-                href={`/demo/index.html${traderId && traderId !== 'demo' ? `?traderId=${traderId}` : ''}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 bg-[#1a3a6c] text-white border border-[#1a3a6c] rounded-lg px-3 py-2 hover:bg-[#15306e] transition-colors shadow-sm text-sm font-semibold"
-                title="Open GST Portal — IMS, GSTR-2B & GSTR-3B filing"
-              >
-                <Globe size={15} />
-                GST Portal
-              </a>
+              {/* GST Portal button — opens the GST portal mockup for IMS +
+                  GSTR-3B filing in a new browser tab. Hidden entirely inside
+                  the native app: there's no "new tab" concept inside a
+                  WebView, and it was one of three header buttons that
+                  didn't fit a phone-width header at all. */}
+              {!isNativeApp && (
+                <a
+                  href={`/demo/index.html${traderId && traderId !== 'demo' ? `?traderId=${traderId}` : ''}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 bg-[#1a3a6c] text-white border border-[#1a3a6c] rounded-lg px-2 sm:px-3 py-2 hover:bg-[#15306e] transition-colors shadow-sm text-sm font-semibold"
+                  title="Open GST Portal — IMS, GSTR-2B & GSTR-3B filing"
+                >
+                  <Globe size={15} />
+                  <span className="hidden sm:inline">GST Portal</span>
+                </a>
+              )}
 
             </div>
           </div>

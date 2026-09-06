@@ -57,12 +57,12 @@ export default function MoneyMeter({ summary, apiBase, isComposition = false, on
     switch (id) {
       case "confirmed":
         content = (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 h-full">
+          <div className="bg-white border border-gray-200 rounded-xl p-3 sm:p-4 h-full">
             <div className="flex items-center gap-1.5 mb-2">
               <CheckCircle2 size={13} className="text-emerald-500" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Confirmed ITC</span>
             </div>
-            <p className="text-2xl font-black text-gray-900">₹{confirmed.toLocaleString("en-IN")}</p>
+            <p className="text-xl sm:text-2xl font-black text-gray-900 break-words">₹{confirmed.toLocaleString("en-IN")}</p>
             <p className="text-xs text-emerald-600 font-medium mt-2 flex items-center gap-1">
               <ArrowUpRight size={11} />This month · live
             </p>
@@ -76,12 +76,12 @@ export default function MoneyMeter({ summary, apiBase, isComposition = false, on
         break;
       case "at_risk":
         content = (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 h-full">
+          <div className="bg-white border border-gray-200 rounded-xl p-3 sm:p-4 h-full">
             <div className="flex items-center gap-1.5 mb-2">
               <ShieldAlert size={13} className="text-amber-500" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">At Risk / Blocked</span>
             </div>
-            <p className="text-2xl font-black text-gray-900">₹{atRisk.toLocaleString("en-IN")}</p>
+            <p className="text-xl sm:text-2xl font-black text-gray-900 break-words">₹{atRisk.toLocaleString("en-IN")}</p>
             <button
               onClick={() => onSwitchTab?.("actions")}
               className="text-xs text-amber-600 font-semibold mt-2 flex items-center gap-1 hover:underline"
@@ -93,12 +93,12 @@ export default function MoneyMeter({ summary, apiBase, isComposition = false, on
         break;
       case "missed":
         content = (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 h-full">
+          <div className="bg-white border border-gray-200 rounded-xl p-3 sm:p-4 h-full">
             <div className="flex items-center gap-1.5 mb-2">
               <AlertCircle size={13} className="text-purple-500" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Missed ITC (GSTR-2B)</span>
             </div>
-            <p className="text-2xl font-black text-purple-700">₹{missed.toLocaleString("en-IN")}</p>
+            <p className="text-xl sm:text-2xl font-black text-purple-700 break-words">₹{missed.toLocaleString("en-IN")}</p>
             <p className="text-xs text-purple-600 font-medium mt-2 flex items-center gap-1">
               <ArrowUpRight size={11} />Unclaimed in portal
             </p>
@@ -107,12 +107,12 @@ export default function MoneyMeter({ summary, apiBase, isComposition = false, on
         break;
       case "recovery":
         content = (
-          <div className="bg-white border border-gray-200 rounded-xl p-4 h-full">
+          <div className="bg-white border border-gray-200 rounded-xl p-3 sm:p-4 h-full">
             <div className="flex items-center gap-1.5 mb-2">
               <IndianRupee size={13} className="text-blue-500" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Potential Recovery</span>
             </div>
-            <p className="text-2xl font-black text-blue-700">₹{(total_recovery_possible || 0).toLocaleString("en-IN")}</p>
+            <p className="text-xl sm:text-2xl font-black text-blue-700 break-words">₹{(total_recovery_possible || 0).toLocaleString("en-IN")}</p>
             <p className="text-xs text-gray-400 font-medium mt-2">Fix supplier issues to unlock</p>
           </div>
         );

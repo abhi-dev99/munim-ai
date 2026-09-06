@@ -185,7 +185,19 @@ export default function TraderApp() {
     if (scanState !== "success" || !scanResult) return;
     if (scanResult.status === "FRAUD_FLAGGED") vibrateAlert();
     else if (scanResult.status === "AT_RISK" || scanResult.status === "FIXABLE_BLOCKED") vibrateWarning();
-    else if (scanResult.status === "CONFIRMED") vibrateSuccess();
+    else if (scanResult.status === "CONFIRMED") {
+      vibrateSuccess();
+      // Plain HTML5 Audio, not a native bridge call -- this page already
+      // runs inside a WebView that's proven to support media APIs (the
+      // voice-query recording feature relies on the same WebView-level
+      // audio support). Synthesized chime, not a sourced sound file --
+      // see frontend/public/verified-chime.wav's own generation script.
+      try {
+        new Audio("/verified-chime.wav").play().catch(() => {});
+      } catch {
+        // Autoplay-blocked or unsupported -- never worth failing the scan over.
+      }
+    }
   }, [scanState, scanResult]);
 
   // Warm the on-device HSN matcher (index + model download) as soon as the

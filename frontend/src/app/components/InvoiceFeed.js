@@ -166,18 +166,18 @@ export default function InvoiceFeed({ traderId, apiBase }) {
         {/* wrapper */}
         <div className="lg:overflow-y-auto flex-1 bg-white">
           {/* Quick Metrics to fill gap */}
-          <div className="grid grid-cols-3 gap-4 p-4 border-b border-[var(--border-subtle)] bg-gray-50/50">
-            <div className="flex flex-col">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4 p-3 sm:p-4 border-b border-[var(--border-subtle)] bg-gray-50/50">
+            <div className="flex flex-col min-w-0">
               <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Total Invoices</span>
-              <span className="text-xl font-bold text-gray-900">{filteredInvoices.length}</span>
+              <span className="text-lg sm:text-xl font-bold text-gray-900 break-words">{filteredInvoices.length}</span>
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-col min-w-0">
               <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Total ITC Value</span>
-              <span className="text-xl font-bold text-gray-900">₹{filteredInvoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0).toLocaleString('en-IN')}</span>
+              <span className="text-lg sm:text-xl font-bold text-gray-900 break-words">₹{filteredInvoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0).toLocaleString('en-IN')}</span>
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-col min-w-0">
               <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Blocked/Risk</span>
-              <span className="text-xl font-bold text-red-600">
+              <span className="text-lg sm:text-xl font-bold text-red-600 break-words">
                 {filteredInvoices.filter(inv => inv.itc_status === 'FIXABLE_BLOCKED' || inv.itc_status === 'AT_RISK' || inv.itc_status === 'FRAUD_FLAGGED').length}
               </span>
             </div>
