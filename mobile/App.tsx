@@ -25,7 +25,7 @@ import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
-import WebView, { type WebViewMessageEvent } from 'react-native-webview'
+import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview'
 import * as LocalAuthentication from 'expo-local-authentication'
 import * as Notifications from 'expo-notifications'
 
@@ -56,19 +56,22 @@ import ClientPicker from './components/ClientPicker'
 // laptop, so leaving the default as-is will only ever work in an emulator.
 const TRADER_PWA_URL = process.env.EXPO_PUBLIC_TRADER_PWA_URL || 'http://localhost:3000/trader'
 
-// Both /trader (this trader's own view) and /dashboard (the CA's client
-// list) live on the same Next.js origin, so localStorage-based auth
-// (CLAUDE.md: JWT persists in localStorage across navigation) survives
-// switching between them in the same WebView -- one login, either view.
-// Derived rather than duplicated so EXPO_PUBLIC_TRADER_PWA_URL only has to
-// be set in one place; falls back to appending /dashboard if the env var
-// didn't end in /trader for some reason.
+// The WebView now loads the site's ROOT, not /trader or /dashboard directly.
+// frontend/src/app/page.js already does 100% of the role detection and
+// routing on its own -- verify-otp returns which role(s) a phone number
+// actually has (backend/app/api/auth.py), and the login page's own
+// client-side router.push() sends a trader to /trader, a CA to /dashboard,
+// or shows a "log in as" choice for a genuine dual-role number. This native
+// shell used to duplicate that decision with its own Trader/CA tab switcher
+// -- redundant with a source of truth the web page already had, and the
+// actual bug report that started this: the switcher bar rendered up under
+// the status bar on some Android configurations and couldn't be tapped at
+// all. Removing the switcher rather than just moving it down: the web page
+// choosing the destination is strictly more correct than a native toggle
+// that has no idea which role the logged-in number actually has.
 const PWA_BASE_URL = TRADER_PWA_URL.replace(/\/trader\/?$/, '')
-const DASHBOARD_PWA_URL = `${PWA_BASE_URL}/dashboard`
 
 const PLATFORM: 'ios' | 'android' = Platform.OS === 'ios' ? 'ios' : 'android'
-
-type ViewMode = 'trader' | 'dashboard'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -113,22 +116,31 @@ function AppContent() {
   // for why this is a showcase, not a feature). Native-triggered only -- the
   // web page has no way to open this and doesn't need one.
   const [sensorsScreenOpen, setSensorsScreenOpen] = useState(false)
-  // Which of the two web app views the WebView currently points at. A full
-  // page load either way (not a client-side route change we can't trigger
-  // from outside the page), but the auth token is in localStorage on the
-  // shared origin so neither view needs a fresh login. Demo-day fix for a
-  // real gap: this shell previously hardcoded /trader only, so there was no
-  // way to show the CA's dashboard from the phone at all regardless of
-  // which number logged in.
-  const [viewMode, setViewMode] = useState<ViewMode>('trader')
-  // The page can navigate itself out from under viewMode (authFetch's own
-  // 401 handler sends any unauthenticated request to "/", and "/" redirects
-  // post-login) -- so tapping a tab has to force a fresh WebView every time,
-  // even a tap on the tab viewMode already says is active, or it can appear
-  // to do nothing if the page had already drifted somewhere else.
-  const [navNonce, setNavNonce] = useState(0)
-  const switchView = useCallback(async (mode: ViewMode) => {
-    if (mode === 'dashboard') {
+  // Tracks the WebView's own current path -- the ONLY reason the native side
+  // needs to know this at all is to (a) show ClientPicker only while on
+  // /dashboard, and (b) trigger the biometric gate the moment the web page's
+  // own router navigates there. Both are reactive to navigation now, not
+  // preemptive the way switchView() used to intercept a tap before it
+  // happened -- an unavoidable trade-off of the web page owning routing:
+  // the native side only finds out after the page has already navigated.
+  const [currentPath, setCurrentPath] = useState('/')
+  // Guards against re-prompting on every onNavigationStateChange event that
+  // fires while ALREADY on /dashboard (WebView fires this repeatedly during
+  // a single page's load, not just on actual URL changes) -- only the
+  // transition INTO /dashboard from somewhere else should trigger it.
+  const wasOnDashboard = useRef(false)
+
+  const onNavigationStateChange = useCallback(async (navState: WebViewNavigation) => {
+    let path = '/'
+    try {
+      path = new URL(navState.url).pathname
+    } catch {
+      // Malformed/about:blank during a transient load state -- keep '/'.
+    }
+    setCurrentPath(path)
+
+    const nowOnDashboard = path.startsWith('/dashboard')
+    if (nowOnDashboard && !wasOnDashboard.current) {
       const hasHardware = await LocalAuthentication.hasHardwareAsync()
       const isEnrolled = await LocalAuthentication.isEnrolledAsync()
       if (hasHardware && isEnrolled) {
@@ -137,13 +149,13 @@ function AppContent() {
           fallbackLabel: 'Use Passcode',
         })
         if (!result.success) {
-          // Authentication failed or was cancelled; abort switch
+          webviewRef.current?.goBack()
+          wasOnDashboard.current = false
           return
         }
       }
     }
-    setViewMode(mode)
-    setNavNonce((n) => n + 1)
+    wasOnDashboard.current = nowOnDashboard
   }, [])
 
   // Keep the web page's window.MunimNative.getStatus()/onStatusChange() in
@@ -218,7 +230,7 @@ function AppContent() {
       }
     }
     setupPush();
-  }, [navNonce]); // Retrigger sending when view switches if needed
+  }, []); // Register once per app session -- no view-switch concept to retrigger on any more
 
   useEffect(() => {
     setCaptureRequestHandler((requestId) => setCaptureRequestId(requestId))
@@ -255,44 +267,26 @@ function AppContent() {
   return (
     <View style={[styles.safeArea, { paddingTop: insets.top }]}>
       <StatusBar style="dark" />
-      <View style={styles.viewSwitcher}>
-        <Pressable
-          onPress={() => switchView('trader')}
-          style={[styles.viewSwitcherTab, viewMode === 'trader' && styles.viewSwitcherTabActive]}
-        >
-          <Text style={[styles.viewSwitcherText, viewMode === 'trader' && styles.viewSwitcherTextActive]}>
-            Trader
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => switchView('dashboard')}
-          style={[styles.viewSwitcherTab, viewMode === 'dashboard' && styles.viewSwitcherTabActive]}
-        >
-          <Text style={[styles.viewSwitcherText, viewMode === 'dashboard' && styles.viewSwitcherTextActive]}>
-            CA Dashboard
-          </Text>
-        </Pressable>
-      </View>
-      {/* Sensors diagnostics entry point -- own workstream, deliberately kept
-          out of the view-switcher row above so it can't conflict with other
-          changes landing there in parallel. */}
+      {/* Sensors diagnostics entry point -- own workstream, kept as a small
+          floating pill now that there's no switcher row for it to sit
+          below. Native-triggered only, the web page has no way to open it. */}
       <Pressable onPress={() => setSensorsScreenOpen(true)} style={styles.sensorsButton}>
         <Text style={styles.sensorsButtonText}>Sensors</Text>
       </Pressable>
       <WebView
-        key={`${viewMode}-${navNonce}`}
         ref={webviewRef}
-        source={{ uri: viewMode === 'trader' ? TRADER_PWA_URL : DASHBOARD_PWA_URL }}
+        source={{ uri: PWA_BASE_URL }}
         style={styles.webview}
         injectedJavaScriptBeforeContentLoaded={injectedJavaScriptBeforeContentLoaded}
         onMessage={onMessage}
+        onNavigationStateChange={onNavigationStateChange}
         javaScriptEnabled
         domStorageEnabled
         originWhitelist={['*']}
         startInLoadingState
         renderLoading={() => <LoadingScreen />}
       />
-      {viewMode === 'dashboard' && traders.length > 0 ? (
+      {currentPath.startsWith('/dashboard') && traders.length > 0 ? (
         <ClientPicker
           traders={traders}
           activeTraderId={activeTraderId}
@@ -328,9 +322,10 @@ const SKELETON_DELAY_MS = 600
  * skeleton the longer a page load takes -- a fast/cached load (good network)
  * never gets past the spinner; a slow one (poor network, cold Cloud Run
  * instance) gets something that looks like progress instead of an
- * indefinite spin. Remounts fresh on every WebView key change (App.tsx's
- * viewMode/navNonce), so this always starts from "spinner" on a new load,
- * never carries stale skeleton state from a previous one.
+ * indefinite spin. The WebView no longer remounts on navigation (it owns its
+ * own history now -- the native shell loads the root URL once and lets the
+ * web app's router take it from there), so this only fires for the app's
+ * single initial load, not on every trader/CA switch the way it used to.
  */
 function LoadingScreen() {
   const [showSkeleton, setShowSkeleton] = useState(false)
@@ -416,34 +411,12 @@ const styles = StyleSheet.create({
   webview: {
     flex: 1,
   },
-  viewSwitcher: {
-    flexDirection: 'row',
-    backgroundColor: '#f0f0f0',
-    padding: 4,
-    gap: 4,
-  },
-  viewSwitcherTab: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  viewSwitcherTabActive: {
-    backgroundColor: '#000',
-  },
-  viewSwitcherText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#666',
-  },
-  viewSwitcherTextActive: {
-    color: '#fff',
-  },
-  // Sensors diagnostics entry point -- its own tiny floating pill, positioned
-  // just clear of the view-switcher row above rather than inside it.
+  // Sensors diagnostics entry point -- its own tiny floating pill in the
+  // top-right corner of the safe-area content, no switcher row to clear any
+  // more.
   sensorsButton: {
     position: 'absolute',
-    top: 52,
+    top: 8,
     right: 8,
     zIndex: 10,
     backgroundColor: 'rgba(0,0,0,0.55)',
