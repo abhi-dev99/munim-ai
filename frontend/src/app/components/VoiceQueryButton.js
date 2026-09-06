@@ -45,17 +45,29 @@ export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
       try {
         const blob = await stopRecording(recorderRef.current);
         recorderRef.current = null;
+        if (!blob || blob.size === 0) {
+          // Recording "succeeded" structurally but captured zero audio --
+          // a real, distinct failure mode (seen on some WebView/codec
+          // combinations) worth telling apart from a transcription error,
+          // rather than uploading an empty file and blaming Groq for it.
+          setErrorMsg(`${ERROR_MESSAGES["transcription-failed"]} [empty recording]`);
+          setState("error");
+          return;
+        }
         const transcript = await transcribeAudio(API_BASE, blob);
         if (!transcript) {
-          setErrorMsg(ERROR_MESSAGES["transcription-failed"]);
+          setErrorMsg(`${ERROR_MESSAGES["transcription-failed"]} [empty transcript]`);
           setState("error");
           return;
         }
         const { intent } = matchVoiceIntent(transcript, traderLang);
         setAnswer(answerVoiceIntent(intent, summary, traderLang));
         setState("answered");
-      } catch {
-        setErrorMsg(ERROR_MESSAGES["transcription-failed"]);
+      } catch (err) {
+        // Real error text appended in brackets -- deliberately visible, not
+        // logged somewhere unreachable, since there's no way to remotely
+        // inspect this WebView's console right now.
+        setErrorMsg(`${ERROR_MESSAGES["transcription-failed"]} [${err?.message || err}]`);
         setState("error");
       }
       return;
@@ -66,8 +78,9 @@ export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
     setState("listening");
 
     const recorder = await startRecording({
-      onError: (code) => {
-        setErrorMsg(ERROR_MESSAGES[code] || "Kuch galat ho gaya, dobara try karein.");
+      onError: (code, detail) => {
+        const base = ERROR_MESSAGES[code] || "Kuch galat ho gaya, dobara try karein.";
+        setErrorMsg(detail ? `${base} [${detail}]` : base);
         setState("error");
       },
     });

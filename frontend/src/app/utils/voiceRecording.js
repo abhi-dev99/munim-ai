@@ -37,8 +37,13 @@ export function isRecordingSupported() {
  *
  * @param {object} opts
  * @param {() => void} [opts.onStart] called once the mic is actually open.
- * @param {(error: string) => void} [opts.onError] short error code:
- *   "unsupported" | "not-allowed" | "start-failed".
+ * @param {(error: string, detail?: string) => void} [opts.onError] short
+ *   error code: "unsupported" | "not-allowed" | "start-failed", plus the
+ *   real `Error.name`/`message` as `detail` -- surfaced so a real-device
+ *   failure is actually diagnosable from what the UI shows, not just
+ *   "something went wrong" (this API has enough distinct failure modes
+ *   across different WebView/Android versions that guessing which one hit
+ *   without the real error text is unreliable).
  */
 export async function startRecording({ onStart, onError } = {}) {
   if (!isRecordingSupported()) {
@@ -62,7 +67,8 @@ export async function startRecording({ onStart, onError } = {}) {
     onStart?.();
     return recorder;
   } catch (err) {
-    onError?.(err?.name === "NotAllowedError" ? "not-allowed" : "start-failed");
+    const code = err?.name === "NotAllowedError" ? "not-allowed" : "start-failed";
+    onError?.(code, `${err?.name || "Error"}: ${err?.message || String(err)}`);
     return null;
   }
 }
