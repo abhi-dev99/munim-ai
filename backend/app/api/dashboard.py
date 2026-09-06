@@ -640,6 +640,29 @@ def _generate_short_code(db, length: int = 6) -> str:
     raise RuntimeError("Could not generate a unique short_code after 5 attempts")
 
 
+class PushTokenModel(BaseModel):
+    token: str
+
+
+@router.post("/register-push-token")
+async def register_push_token(payload: PushTokenModel, current_trader_id: str = Depends(get_current_trader_id)):
+    """
+    Stores an Expo push token against the logged-in trader, so scheduled
+    alerts (backend/app/main.py's deadline_alerts job today) can reach this
+    device directly instead of only via WhatsApp. Called from
+    frontend/src/app/trader/page.js's MUNIM_PUSH_TOKEN listener, which
+    receives the token from mobile/App.tsx's own push-registration
+    useEffect -- that native code has existed since the CA-dashboard commit,
+    but nothing on the web side was ever listening for what it sent until
+    now, so no token had ever actually reached the database.
+    """
+    try:
+        await update_trader(current_trader_id, {"push_token": payload.token})
+        return {"status": "success"}
+    except Exception as e:
+        raise safe_http_error(logger, "Failed to register push token", e)
+
+
 @router.post("/transcribe-audio")
 async def transcribe_audio(
     audio: UploadFile = File(...),

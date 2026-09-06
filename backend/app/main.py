@@ -101,7 +101,7 @@ async def _send_deadline_alerts():
     days_remaining = deadline_day - today.day
 
     # Get all traders with unresolved issues
-    traders = db.table("traders").select("id, whatsapp_number, name").execute()
+    traders = db.table("traders").select("id, whatsapp_number, name, push_token").execute()
     if not traders.data:
         return
 
@@ -130,6 +130,14 @@ async def _send_deadline_alerts():
                 f"nahi toh credit lose ho jayega."
             )
             await whatsapp.send_text_message(trader["whatsapp_number"], msg)
+
+            if trader.get("push_token"):
+                from app.services.push import send_push_notification
+                await send_push_notification(
+                    trader["push_token"],
+                    f"⏰ {filing_type} deadline in {days_remaining} days",
+                    f"₹{blocked_amount:,.0f} ITC at risk across {len(invoices.data)} unresolved invoice(s). Fix before the {deadline_day}th.",
+                )
 
     logger.info(f"Deadline alerts sent for {filing_type}")
 

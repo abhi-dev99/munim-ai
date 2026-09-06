@@ -152,6 +152,35 @@ export default function TraderApp() {
     fetchDashboardData();
   }, []);
 
+  // mobile/App.tsx has requested notification permission and forwarded an
+  // Expo push token here (window.postMessage, not the MunimNative bridge
+  // object -- see mobile/BRIDGE.md) since the CA-dashboard commit, but
+  // nothing on this side was ever listening for it, so no token had ever
+  // actually reached the backend. This registers it the moment it arrives;
+  // a plain browser tab (no native shell, no postMessage ever sent) just
+  // never triggers this at all.
+  useEffect(() => {
+    function handlePushToken(event) {
+      let data;
+      try {
+        data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+      } catch {
+        return;
+      }
+      if (data?.type !== "MUNIM_PUSH_TOKEN" || !data.token) return;
+      authFetch(`${API_BASE}/api/v1/dashboard/register-push-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: data.token }),
+      }).catch(() => {
+        // Best-effort -- a failed registration just means this device keeps
+        // getting alerts over WhatsApp only, same as before this existed.
+      });
+    }
+    window.addEventListener("message", handlePushToken);
+    return () => window.removeEventListener("message", handlePushToken);
+  }, []);
+
   useEffect(() => {
     if (scanState !== "success" || !scanResult) return;
     if (scanResult.status === "FRAUD_FLAGGED") vibrateAlert();
@@ -706,7 +735,7 @@ export default function TraderApp() {
       <main className="flex-1 p-4 overflow-y-auto space-y-6 bg-[var(--bg-primary)]">
         {loading ? (
           <div className="flex items-center justify-center h-40">
-            <div className="animate-spin rounded-none h-8 w-8 border-b-2 border-black"></div>
+            <Loader2 size={28} className="animate-spin text-black" />
           </div>
         ) : activeTab === "home" ? (
           <>
