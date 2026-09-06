@@ -282,6 +282,16 @@ function AppContent() {
   // navigate its own history back (it owns routing entirely now, see
   // onNavigationStateChange's own comment above), and only once there's
   // nowhere left to go does this become "press back again to exit."
+  //
+  // Trader and CA are treated as two separate apps that just happen to
+  // share a shell, by explicit request -- back is allowed to move within
+  // one side's own sub-pages (/dashboard/profile back to /dashboard), but
+  // never lets a back-press cross from one side's root into the other
+  // side's WebView history, even though the underlying WebView history
+  // stack doesn't actually distinguish them. Landing on a side's own root
+  // is treated the same as "nothing left to go back to" -- the very next
+  // back press becomes the exit confirmation, not a jump into the other
+  // side.
   const lastBackPressRef = useRef(0)
   useEffect(() => {
     if (Platform.OS !== 'android') return
@@ -295,7 +305,8 @@ function AppContent() {
         handleCaptureCancel()
         return true
       }
-      if (canGoBackRef.current) {
+      const atSideRoot = currentPath === '/trader' || currentPath === '/dashboard'
+      if (canGoBackRef.current && !atSideRoot) {
         webviewRef.current?.goBack()
         return true
       }
@@ -310,7 +321,7 @@ function AppContent() {
     })
 
     return () => subscription.remove()
-  }, [sensorsScreenOpen, captureRequestId, handleCaptureCancel])
+  }, [sensorsScreenOpen, captureRequestId, handleCaptureCancel, currentPath])
 
   const injectedJavaScriptBeforeContentLoaded = getInjectedJavaScriptBeforeLoad(PLATFORM)
 

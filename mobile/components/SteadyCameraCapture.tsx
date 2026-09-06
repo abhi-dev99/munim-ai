@@ -49,9 +49,16 @@ import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as Haptics from 'expo-haptics'
 import * as Location from 'expo-location'
 import { DeviceMotion } from 'expo-sensors'
+import { useAudioPlayer } from 'expo-audio'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native'
 import { setPendingCaptureLocation } from '../modules/bridge'
+
+// Original, synthesized sine-wave chime (see the generating script in this
+// commit's message/history, not a sourced/licensed sound file) -- a short,
+// bright upward tick distinct from the frontend's own separate "verified"
+// chime (frontend/public/verified-chime.wav), so the two are never confused.
+const CAPTURE_CHIME = require('../assets/capture-chime.wav')
 
 // Rotation rate (deg/s) and linear acceleration (m/s^2) must both be under
 // these for a sample to count as "steady". Both signals matter: rotation
@@ -171,6 +178,7 @@ type CapturedPhoto = { base64: string; mimeType: string }
 
 export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: SteadyCameraCaptureProps) {
   const strings = getStrings(lang)
+  const chimePlayer = useAudioPlayer(CAPTURE_CHIME)
   const [permission, requestPermission] = useCameraPermissions()
   const cameraRef = useRef<CameraView>(null)
   const [steady, setSteady] = useState(false)
@@ -204,6 +212,12 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {
       // No haptics hardware/permission -- never block a capture over it.
     })
+    try {
+      chimePlayer.seekTo(0)
+      chimePlayer.play()
+    } catch {
+      // Never let a sound-effect failure block an actual capture.
+    }
 
     const zoomIn = new Promise<void>((resolve) => {
       Animated.timing(zoomAnim, {
@@ -245,7 +259,7 @@ export default function SteadyCameraCapture({ onCaptured, onCancel, lang }: Stea
     zoomAnim.setValue(0)
     capturingRef.current = false
     setCapturing(false)
-  }, [zoomAnim])
+  }, [zoomAnim, chimePlayer])
 
   const handleRetake = useCallback(() => {
     setReviewPhoto(null)

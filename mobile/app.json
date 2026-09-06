@@ -61,7 +61,8 @@
           "forceCxx20": true,
           "enableOpenCLAndHexagon": true
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "eas": {
