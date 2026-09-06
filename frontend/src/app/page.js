@@ -41,9 +41,10 @@ export default function LoginPage() {
   const router = useRouter();
   const [mobileNumber, setMobileNumber] = useState("");
   const [otp, setOtp] = useState("");
-  const [step, setStep] = useState(1); // 1 = mobile, 2 = otp
+  const [step, setStep] = useState(1); // 1 = mobile, 2 = otp, 3 = choose role (dual-role accounts only)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [roleChoices, setRoleChoices] = useState([]);
 
   useEffect(() => {
     // Auto-redirect if already logged in (need BOTH token and trader data)
@@ -121,17 +122,34 @@ export default function LoginPage() {
         localStorage.setItem("munim_auth_token", data.token);
       }
 
-      // A match on this trader's own whatsapp_number means it's their own
-      // login -> /trader. Otherwise this number only got in via someone
-      // else's ca_whatsapp_number -> it's the CA, route to /dashboard.
-      const isOwnNumber = last10Digits(mobileNumber) === last10Digits(data.trader?.whatsapp_number);
-      localStorage.setItem("munim_auth_role", isOwnNumber ? "trader" : "ca");
-      router.push(destinationFor(isOwnNumber));
+      // verify-otp now tells us directly which role(s) this phone number
+      // actually has (backend/app/api/auth.py) -- own trader account, CA for
+      // someone else's, or both -- instead of us re-deriving it from a
+      // number comparison here. Most logins have exactly one role and go
+      // straight through; a genuine dual-role account (real in the seed
+      // data, see CLAUDE.md) gets a one-time "log in as" choice instead of
+      // silently picking one.
+      const roles = data.roles || [];
+      if (roles.length > 1) {
+        setRoleChoices(roles);
+        setStep(3);
+        setLoading(false);
+        return;
+      }
+
+      const role = roles[0] || "trader";
+      localStorage.setItem("munim_auth_role", role);
+      router.push(destinationFor(role === "trader"));
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleChooseRole = (role) => {
+    localStorage.setItem("munim_auth_role", role);
+    router.push(destinationFor(role === "trader"));
   };
 
   return (
@@ -210,7 +228,7 @@ export default function LoginPage() {
                   {loading ? <Loader2 size={18} className="animate-spin" /> : "Send OTP via WhatsApp"}
                 </button>
               </form>
-            ) : (
+            ) : step === 2 ? (
               <form onSubmit={handleVerifyOtp} className="space-y-5">
                 <div>
                   <label className="block text-sm font-semibold text-gray-300 mb-2">
@@ -251,6 +269,34 @@ export default function LoginPage() {
                   Back to mobile number
                 </button>
               </form>
+            ) : (
+              // Only reached for a genuine dual-role phone number (their own
+              // trader account AND someone else's CA identifier -- both real
+              // roles, not a guess) -- see auth.py's verify-otp `roles`.
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-1">Log in as</h3>
+                  <p className="text-sm text-gray-400">This number is linked to both a trader account and a CA account.</p>
+                </div>
+                <div className="flex bg-[#0a0a0a] border border-[#2a2a2a] rounded-full p-1">
+                  {roleChoices.includes("trader") && (
+                    <button
+                      onClick={() => handleChooseRole("trader")}
+                      className="flex-1 py-2.5 rounded-full text-sm font-bold text-white hover:bg-[#25D366] hover:text-black transition-colors"
+                    >
+                      Trader
+                    </button>
+                  )}
+                  {roleChoices.includes("ca") && (
+                    <button
+                      onClick={() => handleChooseRole("ca")}
+                      className="flex-1 py-2.5 rounded-full text-sm font-bold text-white hover:bg-[#25D366] hover:text-black transition-colors"
+                    >
+                      CA
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>

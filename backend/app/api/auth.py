@@ -146,19 +146,34 @@ async def verify_otp(data: OTPVerify):
     # Success
     delete_otp(phone)
     
-    # Fetch user data to return
+    # Fetch user data to return. `roles` tells the frontend whether this
+    # phone number needs a "log in as Trader / CA" choice: it's their own
+    # number on a traders row (role "trader") and/or another trader's
+    # ca_whatsapp_number (role "ca") -- the two are independent checks, not
+    # mutually exclusive, so a person who is both their own trader AND
+    # someone else's CA (a real case in the seed data, see CLAUDE.md) gets
+    # both roles back rather than whichever check happened to run first.
     trader = None
+    roles = []
     try:
         db = get_supabase()
         res_trader = db.table("traders").select("*").eq("whatsapp_number", phone).execute()
+        res_ca = db.table("traders").select("id").eq("ca_whatsapp_number", phone).execute()
+
         if res_trader.data:
             trader = res_trader.data[0]
-        else:
-            res_ca = db.table("traders").select("*").eq("ca_whatsapp_number", phone).execute()
-            trader = res_ca.data[0] if res_ca.data else None
+            roles.append("trader")
+        if res_ca.data:
+            roles.append("ca")
+            if not trader:
+                # No own-trader row -- this number only exists as a CA
+                # identifier, so fall back to the first client record the
+                # same way this endpoint always has.
+                full_ca = db.table("traders").select("*").eq("ca_whatsapp_number", phone).execute()
+                trader = full_ca.data[0] if full_ca.data else None
     except Exception as e:
         pass
-    
+
     import jwt
 
     token = None
@@ -174,7 +189,8 @@ async def verify_otp(data: OTPVerify):
     return {
         "message": "Login successful.",
         "trader": trader,
-        "token": token
+        "token": token,
+        "roles": roles,
     }
 
 
