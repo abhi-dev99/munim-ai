@@ -23,6 +23,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_API_URL=https://munim-backend-1051889700424.us-central1.run.app
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# Same deal for the admin-router shared secret (see utils/api.js's adminHeaders()
+# and backend/app/api/admin.py's verify_admin_key) -- a --build-arg the CI
+# workflow passes is silently dropped by Docker unless there's a matching ARG
+# declared here; this was missing, which is why setting the workflow's
+# build-arg alone didn't fix admin requests.
+ARG NEXT_PUBLIC_ADMIN_API_KEY=""
+ENV NEXT_PUBLIC_ADMIN_API_KEY=$NEXT_PUBLIC_ADMIN_API_KEY
+
 RUN npm run build
 
 # Production image, copy all the files and run next
