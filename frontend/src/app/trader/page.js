@@ -444,7 +444,7 @@ export default function TraderApp() {
         onError: (message) => {
           if (message !== "cancelled") fileInputRef.current?.click();
         },
-      });
+      }, traderLang);
       return;
     }
     fileInputRef.current?.click();
