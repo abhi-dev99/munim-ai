@@ -29,6 +29,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
+class PushTokenRequest(BaseModel):
+    token: str
+
+@router.post("/push-token")
+async def register_push_token(req: PushTokenRequest, auth_number: str = Depends(get_current_trader_id)):
+    """Receive Expo push token from the PWA when running in the native shell."""
+    logger.info(f"Received push token {req.token} for user {auth_number}")
+    return {"status": "ok"}
+
 @router.get("/summary/{trader_id}")
 async def get_dashboard_summary(trader_id: str = Depends(verify_trader_access)):
     """Get the full dashboard summary for a trader."""

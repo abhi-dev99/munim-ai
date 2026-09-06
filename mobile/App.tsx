@@ -23,8 +23,10 @@
 
 import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Animated, Platform, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Animated, Platform, Pressable, SafeAreaView, StyleSheet, Text, View, StatusBar as RNStatusBar } from 'react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
+import * as LocalAuthentication from 'expo-local-authentication'
+import * as Notifications from 'expo-notifications'
 
 import {
   broadcastStatus,
@@ -37,6 +39,7 @@ import {
 import { getBackendInfo, loadModel, onModelProgress, type BackendInfo, type ModelProgress } from './modules/localLlm'
 import SteadyCameraCapture from './components/SteadyCameraCapture'
 import DeviceSensorsScreen from './components/DeviceSensorsScreen'
+import ClientPicker from './components/ClientPicker'
 
 // EXPO_PUBLIC_ vars are inlined at build time by Expo (no extra config
 // needed — see https://docs.expo.dev/guides/environment-variables/).
@@ -66,6 +69,14 @@ const PLATFORM: 'ios' | 'android' = Platform.OS === 'ios' ? 'ios' : 'android'
 
 type ViewMode = 'trader' | 'dashboard'
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 export default function App() {
   const webviewRef = useRef<WebView>(null)
   const [modelStatus, setModelStatus] = useState<ModelProgress>({ status: 'idle' })
@@ -93,7 +104,21 @@ export default function App() {
   // even a tap on the tab viewMode already says is active, or it can appear
   // to do nothing if the page had already drifted somewhere else.
   const [navNonce, setNavNonce] = useState(0)
-  const switchView = useCallback((mode: ViewMode) => {
+  const switchView = useCallback(async (mode: ViewMode) => {
+    if (mode === 'dashboard') {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync()
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync()
+      if (hasHardware && isEnrolled) {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Unlock CA Dashboard',
+          fallbackLabel: 'Use Passcode',
+        })
+        if (!result.success) {
+          // Authentication failed or was cancelled; abort switch
+          return
+        }
+      }
+    }
     setViewMode(mode)
     setNavNonce((n) => n + 1)
   }, [])
@@ -118,9 +143,59 @@ export default function App() {
     })
   }, [])
 
+  const [traders, setTraders] = useState<{id: string, name?: string, business_name?: string, gstin?: string}[]>([])
+  const [activeTraderId, setActiveTraderId] = useState<string | null>(null)
+
   const onMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data)
+      if (msg.type === 'MUNIM_TRADER_LIST') {
+        setTraders(msg.traders)
+        if (!activeTraderId && msg.traders && msg.traders.length > 0) {
+          setActiveTraderId(msg.traders[0].id)
+        }
+        return
+      }
+    } catch {}
     handleBridgeMessage(event.nativeEvent.data, webviewRef.current)
+  }, [activeTraderId])
+
+  const handleClientSelect = useCallback((traderId: string) => {
+    setActiveTraderId(traderId)
+    if (webviewRef.current) {
+      webviewRef.current.injectJavaScript(`
+        window.postMessage(JSON.stringify({ type: 'MUNIM_SET_CLIENT', traderId: '${traderId}' }), '*');
+        true;
+      `)
+    }
   }, [])
+
+  useEffect(() => {
+    async function setupPush() {
+      if (Platform.OS === 'android' || Platform.OS === 'ios') {
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+        if (finalStatus === 'granted') {
+          try {
+            const token = (await Notifications.getExpoPushTokenAsync()).data;
+            if (webviewRef.current) {
+              webviewRef.current.injectJavaScript(`
+                window.postMessage(JSON.stringify({ type: 'MUNIM_PUSH_TOKEN', token: '${token}' }), '*');
+                true;
+              `);
+            }
+          } catch (e) {
+            console.log('Failed to get push token', e);
+          }
+        }
+      }
+    }
+    setupPush();
+  }, [navNonce]); // Retrigger sending when view switches if needed
 
   useEffect(() => {
     setCaptureRequestHandler((requestId) => setCaptureRequestId(requestId))
@@ -155,7 +230,7 @@ export default function App() {
   const injectedJavaScriptBeforeContentLoaded = getInjectedJavaScriptBeforeLoad(PLATFORM)
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={styles.safeArea}>
       <StatusBar style="dark" />
       <View style={styles.viewSwitcher}>
         <Pressable
@@ -194,6 +269,13 @@ export default function App() {
         startInLoadingState
         renderLoading={() => <LoadingScreen />}
       />
+      {viewMode === 'dashboard' && traders.length > 0 ? (
+        <ClientPicker
+          traders={traders}
+          activeTraderId={activeTraderId}
+          onSelect={handleClientSelect}
+        />
+      ) : null}
       {captureRequestId ? (
         <View style={StyleSheet.absoluteFill}>
           <SteadyCameraCapture onCaptured={handleCaptured} onCancel={handleCaptureCancel} />
@@ -205,7 +287,7 @@ export default function App() {
         </View>
       ) : null}
       {__DEV__ ? <ModelStatusPill status={modelStatus} backend={backendInfo} /> : null}
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -304,6 +386,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
+    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 54, // Fixed padding for iOS dynamic islands/notches when SafeAreaView fails
   },
   webview: {
     flex: 1,

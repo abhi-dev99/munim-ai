@@ -102,7 +102,7 @@ export default function TraderApp() {
         const tradersRes = await authFetch(`${API_BASE}/api/v1/dashboard/traders`);
         if (!tradersRes.ok) throw new Error("Failed to fetch traders");
         const tradersData = await tradersRes.json();
-        const activeTrader = tradersData.traders?.[0];
+        const activeTrader = tradersData.traders?.find(t => t.whatsapp_number === "919136875481") || tradersData.traders?.[0];
         const activeId = activeTrader?.id || "demo";
         setTraderName(activeTrader?.business_name || activeTrader?.name || "My Business");
         setTraderPhone(activeTrader?.whatsapp_number || null);

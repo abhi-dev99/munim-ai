@@ -165,7 +165,7 @@ export default function ProfilePage() {
         apiBase={API_BASE}
       />
 
-      <main className="flex-1 ml-64 flex flex-col overflow-y-auto">
+      <main className="flex-1 md:ml-64 flex flex-col overflow-y-auto">
         {/* Header */}
         <header className="flex-none h-[65px] px-8 border-b border-gray-200 bg-white flex items-center gap-3 sticky top-0 z-10">
           <User size={18} className="text-[#10b981]" />
@@ -189,59 +189,109 @@ export default function ProfilePage() {
             <section>
               <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Clients ({traders.length})</h2>
               <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50">
-                      <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Business Name</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">GSTIN</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Phone</th>
-                      <th className="text-center px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Composition</th>
-                      <th className="text-right px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {traders.map(t => (
-                      <tr key={t.id} className="hover:bg-gray-50/60 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-gray-900">{t.name || t.business_name || "—"}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-500 bg-gray-50">
-                          <div className="flex items-center justify-between">
-                            <span>{t.gstin || "Not set"}</span>
-                            {!t.gstin && (
-                              <button onClick={() => handleSendReminder(t.id)} className="ml-2 p-1 text-green-600 hover:bg-green-100 rounded" title="Send WhatsApp Reminder">
-                                <MessageCircle size={14} />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-gray-600">{t.whatsapp_number || "—"}</td>
-                        <td className="px-4 py-3">
-                          <button
-                            onClick={() => handleToggleComposition(t.id, t.is_composition)}
-                            className="flex items-center gap-1.5 mx-auto text-gray-600 hover:text-gray-900 transition-colors"
-                            title="Composition dealers can't claim ITC"
-                          >
-                            {t.is_composition ? (
-                              <ToggleRight size={20} className="text-[#10b981]" />
-                            ) : (
-                              <ToggleLeft size={20} className="text-gray-400" />
-                            )}
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {(t.open_issues || 0) > 0 ? (
-                            <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                              {t.open_issues} issues
-                            </span>
-                          ) : (
-                            <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                              Compliant
-                            </span>
-                          )}
-                        </td>
+                {/* Desktop Table */}
+                <div className="hidden md:block">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Business Name</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">GSTIN</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Phone</th>
+                        <th className="text-center px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Composition</th>
+                        <th className="text-right px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-500">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {traders.map(t => (
+                        <tr key={t.id} className="hover:bg-gray-50/60 transition-colors">
+                          <td className="px-4 py-3 font-semibold text-gray-900">{t.name || t.business_name || "—"}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-500 bg-gray-50">
+                            <div className="flex items-center justify-between">
+                              <span>{t.gstin || "Not set"}</span>
+                              {!t.gstin && (
+                                <button onClick={() => handleSendReminder(t.id)} className="ml-2 p-1 text-green-600 hover:bg-green-100 rounded" title="Send WhatsApp Reminder">
+                                  <MessageCircle size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{t.whatsapp_number || "—"}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => handleToggleComposition(t.id, t.is_composition)}
+                              className="flex items-center gap-1.5 mx-auto text-gray-600 hover:text-gray-900 transition-colors"
+                              title="Composition dealers can't claim ITC"
+                            >
+                              {t.is_composition ? (
+                                <ToggleRight size={20} className="text-[#10b981]" />
+                              ) : (
+                                <ToggleLeft size={20} className="text-gray-400" />
+                              )}
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {(t.open_issues || 0) > 0 ? (
+                              <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                                {t.open_issues} issues
+                              </span>
+                            ) : (
+                              <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                                Compliant
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile Cards */}
+                <div className="md:hidden divide-y divide-gray-100">
+                  {traders.map(t => (
+                    <div key={t.id} className="p-4 flex flex-col gap-3">
+                      <div className="flex justify-between items-start">
+                        <span className="font-semibold text-gray-900">{t.name || t.business_name || "—"}</span>
+                        {(t.open_issues || 0) > 0 ? (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                            {t.open_issues} issues
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                            Compliant
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div className="flex justify-between items-center bg-gray-50 rounded p-2">
+                        <span className="font-mono text-xs text-gray-500">{t.gstin || "Not set"}</span>
+                        {!t.gstin && (
+                          <button onClick={() => handleSendReminder(t.id)} className="flex items-center gap-1 text-[10px] font-bold text-green-600 hover:text-green-700">
+                            <MessageCircle size={12} /> Remind
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-sm">
+                        <div className="flex items-center gap-1.5 text-gray-600">
+                          <Phone size={14} className="text-gray-400" />
+                          {t.whatsapp_number || "—"}
+                        </div>
+                        <button
+                          onClick={() => handleToggleComposition(t.id, t.is_composition)}
+                          className="flex items-center gap-1.5 text-gray-600 hover:text-gray-900 transition-colors"
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-400">Composition</span>
+                          {t.is_composition ? (
+                            <ToggleRight size={20} className="text-[#10b981]" />
+                          ) : (
+                            <ToggleLeft size={20} className="text-gray-400" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
           )}
@@ -259,19 +309,19 @@ export default function ProfilePage() {
               </div>
             </div>
             <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <InputField label="Full Name"         value={profile.name}           onChange={v => setProfile(p => ({ ...p, name: v }))}           icon={User}      />
                 <InputField label="Firm / Practice Name" value={profile.firm_name}    onChange={v => setProfile(p => ({ ...p, firm_name: v }))}        icon={Building2} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <InputField label="Email"             value={profile.email}          onChange={v => setProfile(p => ({ ...p, email: v }))}            type="email" icon={Mail}  />
                 <InputField label="WhatsApp / Phone"  value={profile.phone}          onChange={v => setProfile(p => ({ ...p, phone: v }))}            type="tel"   icon={Phone} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <InputField label="ICAI Membership No." value={profile.membership_no} onChange={v => setProfile(p => ({ ...p, membership_no: v }))}   icon={CreditCard} />
                 <InputField label="GSTIN (Practice)"  value={profile.gstin}          onChange={v => setProfile(p => ({ ...p, gstin: v }))}            icon={CreditCard} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <InputField label="City"              value={profile.city}           onChange={v => setProfile(p => ({ ...p, city: v }))}             icon={MapPin} />
                 <InputField label="State"             value={profile.state}          onChange={v => setProfile(p => ({ ...p, state: v }))}            icon={MapPin} />
               </div>

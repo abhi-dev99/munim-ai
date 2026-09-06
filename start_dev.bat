@@ -28,7 +28,7 @@ rem --- backend/.env: make sure ALLOWED_ORIGINS covers whichever frontend port w
 rem findstr reads the file directly rather than re-executing each line through
 rem the shell, so comment lines containing literal | or & (e.g. the Redis/
 rem ngrok comments already in this file) can't be misparsed as pipes/operators.
-set "CORS_ORIGINS=http://localhost:%FRONTEND_PORT%,http://localhost:3000,http://localhost:3002,https://moaning-thwarting-dinginess.ngrok-free.dev"
+set "CORS_ORIGINS=http://localhost:%FRONTEND_PORT%,http://localhost:3000,http://localhost:3002,https://constrain-scoundrel-overkill.ngrok-free.dev"
 set "TMP_BACKEND_ENV=backend\.env.tmp"
 if exist backend\.env (
     findstr /v /b /c:"ALLOWED_ORIGINS=" backend\.env > "%TMP_BACKEND_ENV%"
@@ -60,7 +60,7 @@ if not defined ADMIN_KEY (
 echo.
 echo [3/5] Starting Backend (FastAPI) on port %BACKEND_PORT%...
 cd backend
-start "Munim.ai Backend" cmd /k "title Munim.ai Backend && C:\Users\HP\AppData\Local\Programs\Python\Python312\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --reload"
+start "Munim.ai Backend" cmd /k "title Munim.ai Backend && python -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --reload"
 cd ..
 
 echo.
@@ -71,7 +71,7 @@ cd ..
 
 echo.
 echo [5/5] Starting Ngrok tunnel -^> port %BACKEND_PORT%...
-start "Munim.ai Tunnel" cmd /k "title Munim.ai Tunnel && .\ngrok.exe http --domain=moaning-thwarting-dinginess.ngrok-free.dev %BACKEND_PORT%"
+start "Munim.ai Tunnel" cmd /k "title Munim.ai Tunnel && ngrok http --domain=constrain-scoundrel-overkill.ngrok-free.dev %BACKEND_PORT%"
 
 echo.
 echo Waiting for tunnel to initialise...
@@ -82,7 +82,7 @@ echo ====================================================
 echo  All set, son!
 echo  Frontend : http://localhost:%FRONTEND_PORT%
 echo  Backend  : http://localhost:%BACKEND_PORT%
-echo  Tunnel   : https://moaning-thwarting-dinginess.ngrok-free.dev
+echo  Tunnel   : https://constrain-scoundrel-overkill.ngrok-free.dev
 echo ====================================================
 echo.
 echo  Copy the Webhook URL above into Meta Developer Console

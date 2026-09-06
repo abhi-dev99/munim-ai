@@ -12,7 +12,7 @@ async def update():
         # Update inbound_email and ca_whatsapp_number
         # Using the same whatsapp number for CA for testing purposes
         update_data = {
-            "inbound_email": "c3ae630f3938b8b98d8b@cloudmailin.net",
+            "inbound_email": "847ae82ac72e5905db83@cloudmailin.net",
             "ca_whatsapp_number": whatsapp_number
         }
         res = supabase.table("traders").update(update_data).eq("id", trader_id).execute()

@@ -20,7 +20,14 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["android.permission.RECORD_AUDIO"]
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -58,9 +65,8 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "182a85fb-0866-4194-88db-fcc8bb232d12"
+        "projectId": "b2ecfb42-0ef0-4a51-a671-a9c8b34c0f8f"
       }
-    },
-    "owner": "abhi-dev99"
+    }
   }
 }

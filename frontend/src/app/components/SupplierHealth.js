@@ -321,8 +321,8 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
 
         </div> {/* Close z-10 header container */}
 
-        {/* Table */}
-        <div className="bg-white border border-gray-200 rounded-xl lg:overflow-hidden flex flex-col flex-1 lg:min-h-0 mb-4">
+        {/* Desktop Table */}
+        <div className="hidden md:flex bg-white border border-gray-200 rounded-xl lg:overflow-hidden flex-col flex-1 lg:min-h-0 mb-4">
           <div className="lg:overflow-auto flex-1">
             <table className="w-full text-sm border-collapse relative">
               <thead className="sticky top-0 z-20 shadow-sm">
@@ -414,6 +414,63 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Mobile Cards */}
+        <div className="md:hidden flex flex-col gap-3 pb-4">
+          {displayed.length === 0 ? (
+            <div className="py-10 text-center text-sm text-gray-400 bg-white border border-gray-200 rounded-xl">
+              {search || filterStatus !== "ALL" ? "No suppliers match your filter." : "No supplier data yet."}
+            </div>
+          ) : displayed.map((sup, idx) => {
+            const cfg = STATUS_CONFIG[sup.status];
+            return (
+              <div 
+                key={sup.id}
+                onClick={() => setActiveSupplier(sup)}
+                className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-3 shadow-sm"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full flex-none ${cfg.dot}`} />
+                    <span className="font-bold text-gray-900 text-sm">{sup.name}</span>
+                  </div>
+                  <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
+                    {t(cfg.labelKey)}
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-center">
+                  <span className="font-mono text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{sup.gstin}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${cfg.bar} transition-all duration-500`} style={{ width: `${sup.health}%` }} />
+                    </div>
+                    <span className={`text-xs font-bold ${sup.health > 80 ? "text-emerald-700" : sup.health > 40 ? "text-amber-700" : "text-red-700"}`}>
+                      {sup.health}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-gray-50">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">ITC</span>
+                    <span className="font-semibold text-gray-900 text-sm">{formatINR(sup.itcAmount)}</span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Issues</span>
+                    {sup.issues > 0 ? (
+                      <span className="inline-flex items-center gap-0.5 text-xs font-bold text-red-600 hover:underline" onClick={e => { e.stopPropagation(); onSwitchTab?.("actions"); }}>
+                        {sup.issues}<ArrowUpRight size={10} />
+                      </span>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

@@ -450,6 +450,29 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const handleNativeMessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "MUNIM_SET_CLIENT" && msg.traderId) {
+          const trader = traders.find(t => t.id === msg.traderId);
+          if (trader) switchTrader(trader);
+        } else if (msg.type === "MUNIM_PUSH_TOKEN" && msg.token) {
+          authFetch(`${API_BASE}/api/v1/dashboard/push-token`, {
+            method: "POST",
+            body: JSON.stringify({ token: msg.token })
+          }).catch(() => {});
+        }
+      } catch (e) {}
+    };
+    window.addEventListener("message", handleNativeMessage);
+    document.addEventListener("message", handleNativeMessage);
+    return () => {
+      window.removeEventListener("message", handleNativeMessage);
+      document.removeEventListener("message", handleNativeMessage);
+    };
+  }, [traders]);
+
+  useEffect(() => {
     if (traderId) fetchSummary(traderId);
   }, [traderId]);
 
@@ -459,6 +482,15 @@ export default function Home() {
       const data = await res.json();
       const list = data.traders || [];
       setTraders(list);
+      
+      // Notify native shell
+      if (typeof window !== "undefined" && window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: "MUNIM_TRADER_LIST",
+          traders: list
+        }));
+      }
+
       if (list.length > 0) {
         const matched = defaultId ? list.find((t) => t.id === defaultId) : null;
         const selected = matched || list[0];
@@ -481,17 +513,28 @@ export default function Home() {
   }
 
   async function fetchSummary(tid) {
-    setLoading(true);
+    const cacheKey = `munim_summary_cache_${tid}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        setSummary(JSON.parse(cached));
+        setLoading(false);
+      } catch { /* ignore */ }
+    } else {
+      setLoading(true);
+    }
+
     try {
       const res = await authFetch(`${API_BASE}/api/v1/dashboard/summary/${tid}`);
       if (res.ok) {
         const data = await res.json();
         setSummary(data);
+        localStorage.setItem(cacheKey, JSON.stringify(data));
       } else {
-        loadDemoSummary();
+        if (!cached) loadDemoSummary();
       }
     } catch {
-      loadDemoSummary();
+      if (!cached) loadDemoSummary();
     } finally {
       setLoading(false);
     }
@@ -602,7 +645,7 @@ export default function Home() {
 
             <div className="flex items-center gap-1.5 sm:gap-3 flex-none">
               {/* Trader Selector */}
-              <div className="relative">
+              <div className="relative" style={{ display: (typeof window !== "undefined" && window.ReactNativeWebView) ? "none" : "block" }}>
                 <button
                   onClick={() => setTraderDropdown((v) => !v)}
                   className="flex items-center gap-1.5 sm:gap-2 bg-white border border-gray-200 rounded-lg px-2 sm:px-3 py-2 hover:bg-gray-50 transition-colors shadow-sm"
