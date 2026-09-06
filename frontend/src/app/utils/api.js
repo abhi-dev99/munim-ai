@@ -11,6 +11,21 @@ export const adminHeaders = () => {
   return key ? { "X-Admin-Key": key } : {};
 };
 
+// Uploads a recorded voice-query clip (see utils/voiceRecording.js) to the
+// backend for transcription and returns the transcript text. Thin wrapper
+// so VoiceQueryButton.js doesn't need to know the endpoint shape.
+export const transcribeAudio = async (apiBase, blob) => {
+  const formData = new FormData();
+  formData.append("audio", blob, "voice-query.webm");
+  const res = await authFetch(`${apiBase}/api/v1/dashboard/transcribe-audio`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) throw new Error("Transcription failed");
+  const data = await res.json();
+  return data.text || "";
+};
+
 export const authFetch = async (url, options = {}) => {
   options.cache = 'no-store';
   if (typeof window !== 'undefined') {

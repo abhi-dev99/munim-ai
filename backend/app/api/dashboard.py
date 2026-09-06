@@ -8,7 +8,7 @@ import secrets
 import string
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 from pydantic import BaseModel
 from app.api.deps import verify_trader_access, get_current_trader_id, HTTPException
 from app.config import get_settings
@@ -638,6 +638,43 @@ def _generate_short_code(db, length: int = 6) -> str:
         if not existing.data:
             return candidate
     raise RuntimeError("Could not generate a unique short_code after 5 attempts")
+
+
+@router.post("/transcribe-audio")
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    current_trader_id: str = Depends(get_current_trader_id),
+):
+    """
+    Speech-to-text for the trader PWA's voice-query button, over a plain
+    authenticated HTTP call rather than the browser's Web Speech API --
+    that API is unsupported inside the React Native WebView the mobile app
+    embeds this page in (a long-standing Android System WebView limitation;
+    Firefox lacks it too), which is why VoiceQueryButton.js's mic button
+    silently doesn't even render there. Same transcription path
+    webhook.py's handle_voice_message() already uses for WhatsApp voice
+    notes -- Groq's hosted Whisper, not a second implementation of speech-to-
+    text. Only the input transport differs: WhatsApp hands us an already-
+    downloaded media_id, this endpoint takes a browser-recorded audio blob
+    directly. Everything downstream (voiceIntent.js's local intent
+    matching) is unchanged.
+    """
+    from groq import AsyncGroq
+
+    settings = get_settings()
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload")
+
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        transcription = await client.audio.transcriptions.create(
+            file=(audio.filename or "audio.webm", audio_bytes),
+            model="whisper-large-v3",
+        )
+        return {"text": transcription.text.strip()}
+    except Exception as e:
+        raise safe_http_error(logger, "Audio transcription failed", e)
 
 
 @router.get("/onboard-link")

@@ -1,46 +1,63 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Mic, MicOff, Loader2 } from "lucide-react";
-import { isRecognitionSupported, startListening, stopListening } from "../utils/voiceRecognition";
+import { isRecordingSupported, startRecording, stopRecording } from "../utils/voiceRecording";
+import { transcribeAudio } from "../utils/api";
 import { matchVoiceIntent, answerVoiceIntent } from "../utils/voiceIntent";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 /**
- * "Ask Munim" — on-device voice query for a trader's own dashboard summary.
+ * "Ask Munim" — voice query for a trader's own dashboard summary.
  * Tap the mic, ask something like "mera ITC kitna bacha hai", get an
  * instant answer from data already loaded on this page (see
- * utils/voiceIntent.js's answerVoiceIntent — no extra network call).
+ * utils/voiceIntent.js's answerVoiceIntent).
  *
- * Renders nothing if the browser doesn't support on-device speech
- * recognition (Firefox, many in-app webviews) rather than showing a mic
- * that silently fails when tapped.
+ * Recording is getUserMedia/MediaRecorder based (utils/voiceRecording.js),
+ * not the Web Speech API -- the mobile app embeds this page inside a React
+ * Native WebView (Android System WebView, not Chrome), which has never
+ * supported SpeechRecognition. The recorded clip is transcribed server-side
+ * via the same Groq Whisper call webhook.py's WhatsApp voice-note handler
+ * already uses (utils/api.js's transcribeAudio -> POST
+ * /dashboard/transcribe-audio) -- one transcription implementation, two
+ * input transports. Everything after getting a transcript (intent matching,
+ * the answer itself) is unchanged from before.
+ *
+ * Renders nothing if the browser/WebView doesn't support audio recording at
+ * all, rather than showing a mic that silently fails when tapped.
  */
 export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
-  const [state, setState] = useState("idle"); // idle | listening | answered | error
+  const [state, setState] = useState("idle"); // idle | listening | transcribing | answered | error
   const [answer, setAnswer] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-  const [recognition, setRecognition] = useState(null);
+  const recorderRef = useRef(null);
 
   const ERROR_MESSAGES = {
     "not-allowed": "Mic permission allow karein settings mein.",
-    "no-speech": "Kuch sunai nahi diya, dobara try karein.",
     unsupported: "Ye phone/browser voice input support nahi karta.",
+    "transcription-failed": "Awaaz samajhne mein dikkat aayi, dobara try karein.",
   };
 
-  // Map 2-letter language code to Web Speech API locale
-  const getRecognitionLocale = (lang) => {
-    const localeMap = {
-      "hi": "hi-IN",
-      "en": "en-IN",
-      "mr": "mr-IN",
-      "gu": "gu-IN",
-    };
-    return localeMap[lang] || "hi-IN";
-  };
-
-  const handleTap = useCallback(() => {
+  const handleTap = useCallback(async () => {
     if (state === "listening") {
-      stopListening(recognition);
+      setState("transcribing");
+      try {
+        const blob = await stopRecording(recorderRef.current);
+        recorderRef.current = null;
+        const transcript = await transcribeAudio(API_BASE, blob);
+        if (!transcript) {
+          setErrorMsg(ERROR_MESSAGES["transcription-failed"]);
+          setState("error");
+          return;
+        }
+        const { intent } = matchVoiceIntent(transcript, traderLang);
+        setAnswer(answerVoiceIntent(intent, summary, traderLang));
+        setState("answered");
+      } catch {
+        setErrorMsg(ERROR_MESSAGES["transcription-failed"]);
+        setState("error");
+      }
       return;
     }
 
@@ -48,37 +65,35 @@ export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
     setErrorMsg("");
     setState("listening");
 
-    const rec = startListening({
-      lang: getRecognitionLocale(traderLang),
-      onResult: (transcript) => {
-        const { intent } = matchVoiceIntent(transcript, traderLang);
-        setAnswer(answerVoiceIntent(intent, summary, traderLang));
-        setState("answered");
-      },
+    const recorder = await startRecording({
       onError: (code) => {
         setErrorMsg(ERROR_MESSAGES[code] || "Kuch galat ho gaya, dobara try karein.");
         setState("error");
       },
-      onEnd: () => {
-        setState((s) => (s === "listening" ? "idle" : s));
-      },
     });
-    setRecognition(rec);
-  }, [state, recognition, summary, traderLang]);
+    recorderRef.current = recorder;
+  }, [state, summary, traderLang]);
 
-  if (!isRecognitionSupported()) return null;
+  if (!isRecordingSupported()) return null;
 
   return (
     <div className="rounded-none border border-[var(--border-subtle)] bg-white p-4">
       <div className="flex items-center gap-3">
         <button
           onClick={handleTap}
+          disabled={state === "transcribing"}
           aria-label={state === "listening" ? "Sunna band karein" : "Munim se poochein"}
-          className={`flex-none w-11 h-11 rounded-none flex items-center justify-center transition-colors ${
+          className={`flex-none w-11 h-11 rounded-none flex items-center justify-center transition-colors disabled:opacity-50 ${
             state === "listening" ? "bg-red-600 text-white" : "bg-black text-white hover:bg-gray-800"
           }`}
         >
-          {state === "listening" ? <MicOff size={18} /> : <Mic size={18} />}
+          {state === "transcribing" ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : state === "listening" ? (
+            <MicOff size={18} />
+          ) : (
+            <Mic size={18} />
+          )}
         </button>
         <div className="flex-1 min-w-0">
           <p className="text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">
@@ -88,6 +103,9 @@ export default function VoiceQueryButton({ summary, traderLang = "hi" }) {
             <p className="text-sm text-[var(--text-secondary)] flex items-center gap-1.5 mt-0.5">
               <Loader2 size={13} className="animate-spin" /> Sun raha hoon...
             </p>
+          )}
+          {state === "transcribing" && (
+            <p className="text-sm text-[var(--text-secondary)] mt-0.5">Samajh raha hoon...</p>
           )}
           {state === "answered" && <p className="text-sm font-medium mt-0.5">{answer}</p>}
           {state === "error" && <p className="text-sm text-[var(--red-primary)] mt-0.5">{errorMsg}</p>}
