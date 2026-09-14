@@ -7,6 +7,7 @@ import logging
 import secrets
 import string
 from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, UploadFile, File
 from pydantic import BaseModel
@@ -125,6 +126,14 @@ async def get_action_items(trader_id: str = Depends(verify_trader_access)):
             eligible = inv.get("itc_amount_eligible") or 0
             impact = blocked if blocked > 0 else eligible
 
+            # Timing is the product's first differentiator: a CA reconciles at
+            # month end, by which point a supplier who hasn't filed can no
+            # longer be chased in time. Surfacing the remaining window is what
+            # makes "we check on arrival" mean something on screen rather than
+            # only in the pitch. Only AT_RISK gets it — that is the one status
+            # whose fix depends on somebody else filing.
+            deadline = _supplier_filing_deadline(inv.get("invoice_date")) if status == "AT_RISK" else None
+
             actions.append(ActionItem(
                 id=inv["id"],
                 invoice_id=inv["id"],
@@ -132,6 +141,8 @@ async def get_action_items(trader_id: str = Depends(verify_trader_access)):
                 issue=inv.get("itc_block_reason") or _get_issue_label(status, lang),
                 impact_amount=impact,
                 fix_action=_get_fix_action(status, lang),
+                deadline=deadline.isoformat() if deadline else None,
+                days_to_fix=(deadline - date.today()).days if deadline else None,
                 priority=0,
             ))
 
@@ -225,6 +236,26 @@ async def get_itc_timeline(trader_id: str = Depends(verify_trader_access)):
         return {"timeline": timeline}
     except Exception as e:
         raise safe_http_error(logger, "Failed to build ITC timeline", e)
+
+
+def _supplier_filing_deadline(invoice_date_str: Optional[str]) -> Optional[date]:
+    """
+    The date by which this invoice's supplier must file GSTR-1 for the credit
+    to land in the expected period: the 11th of the month after the invoice.
+
+    Chasing a supplier is only useful before that date, which is exactly why
+    Munim checks an invoice when it arrives instead of at month end. Returns
+    None for an unparseable date rather than guessing a deadline — a wrong
+    countdown is worse than none, because a CA would act on it.
+    """
+    if not invoice_date_str:
+        return None
+    try:
+        d = date.fromisoformat(str(invoice_date_str)[:10])
+    except (ValueError, TypeError):
+        return None
+    year, month = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    return date(year, month, 11)
 
 
 def _get_fix_action(status: str, lang: str = "en") -> str:
