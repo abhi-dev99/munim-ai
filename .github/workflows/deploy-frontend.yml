@@ -49,7 +49,6 @@ jobs:
         run: |
           docker build \
             --build-arg NEXT_PUBLIC_API_URL=https://munim-backend-1051889700424.us-central1.run.app \
-            --build-arg NEXT_PUBLIC_ADMIN_API_KEY=8b1a9dc193e928e65e8dedd08e4943dc62d32d330647b927 \
             -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.IMAGE_NAME }}:latest \
             .

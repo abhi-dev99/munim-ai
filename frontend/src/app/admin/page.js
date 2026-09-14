@@ -1,5 +1,5 @@
 "use client";
-import { authFetch, adminHeaders } from "@/src/app/utils/api";
+import { authFetch, adminHeaders, ensureAdminKey } from "@/src/app/utils/api";
 
 
 import { useState, useEffect } from "react";
@@ -14,6 +14,12 @@ export default function AdminPage() {
   const [selectedTrader, setSelectedTrader] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // Ops surface: the delete endpoints below are gated on X-Admin-Key, which
+  // is no longer baked into the bundle -- prompt for it once per session.
+  useEffect(() => {
+    ensureAdminKey();
+  }, []);
 
   useEffect(() => {
     async function fetchTraders() {

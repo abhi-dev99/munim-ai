@@ -47,7 +47,10 @@ if exist "%ENV_LOCAL%" (
     type nul > "%TMP_FRONTEND_ENV%"
 )
 echo NEXT_PUBLIC_API_URL=http://localhost:%BACKEND_PORT%>> "%TMP_FRONTEND_ENV%"
-if defined ADMIN_KEY echo NEXT_PUBLIC_ADMIN_API_KEY=%ADMIN_KEY%>> "%TMP_FRONTEND_ENV%"
+rem The admin key is deliberately NOT written here. NEXT_PUBLIC_* values are
+rem inlined into the client bundle by Next.js, which is how the production
+rem key ended up downloadable from the live site. /dev and /admin now prompt
+rem for it once per browser session (see frontend/src/app/utils/api.js).
 move /y "%TMP_FRONTEND_ENV%" "%ENV_LOCAL%" >nul
 
 if not defined ADMIN_KEY (

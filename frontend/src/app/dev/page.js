@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import GeminiKeysModal from "../components/GeminiKeysModal";
-import { adminHeaders } from "../utils/api";
+import { adminHeaders, ensureAdminKey } from "../utils/api";
 import { 
   Activity, Database, Server, Link as LinkIcon, RefreshCw, 
   MessageSquare, Cpu, HardDrive, ShieldCheck, Play, 
@@ -25,6 +25,12 @@ export default function DevDashboard() {
   const [testResult, setTestResult] = useState(null);
   const [testError, setTestError] = useState(null);
   const [expandedStep, setExpandedStep] = useState(null);
+
+  // Ops surface: ask for the admin key once per session before any
+  // /api/v1/admin/* call goes out. Without it every panel below 403s.
+  useEffect(() => {
+    ensureAdminKey();
+  }, []);
 
   const fetchStatus = async (service = null) => {
     if (service) {
