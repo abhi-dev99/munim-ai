@@ -51,6 +51,11 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
         description: a.issue || "No details available",
         advisory:    a.fix_action || null,
         urgency:     (a.impact_amount || 0) > 20000 ? "CRITICAL" : (a.impact_amount || 0) > 10000 ? "HIGH" : "MEDIUM",
+        // Days left to chase this supplier before their GSTR-1 for the
+        // invoice's period is due. Only AT_RISK items carry it, since that is
+        // the one status whose fix depends on someone else filing.
+        daysToFix:   typeof a.days_to_fix === "number" ? a.days_to_fix : null,
+        deadline:    a.deadline || null,
       }));
       setActions(list);
     } catch (err) {
@@ -211,6 +216,20 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
                       </span>
                     </div>
                     <p className="text-xs text-gray-500 truncate mt-0.5">{action.description}</p>
+                    {/* The timing claim, made visible: a CA reconciling at
+                        month end has already lost this window. */}
+                    {action.daysToFix !== null && (
+                      <p
+                        className="text-[10px] font-bold mt-1"
+                        style={{ color: action.daysToFix < 0 ? "var(--text-muted)" : "var(--red-primary)" }}
+                      >
+                        {action.daysToFix < 0
+                          ? t("act_window_closed")
+                          : action.daysToFix === 0
+                          ? t("act_due_today")
+                          : t("act_days_left", { count: action.daysToFix })}
+                      </p>
+                    )}
                   </div>
 
                   {/* ITC amount */}

@@ -1,6 +1,6 @@
 "use client";
 import { authFetch } from "@/src/app/utils/api";
-import { assessPhotoQuality } from "@/src/app/utils/imageQuality";
+import { assessPhotoQuality, GLARE_RATIO_THRESHOLD } from "@/src/app/utils/imageQuality";
 import { vibrateAlert, vibrateSuccess, vibrateWarning } from "@/src/app/utils/haptics";
 import { queueUpload, getQueuedUploads, removeQueuedUpload } from "@/src/app/utils/offlineQueue";
 import { matchHSN, prewarmHSNMatcher } from "@/src/app/utils/hsnMatch";
@@ -14,8 +14,50 @@ import InvoiceDetailModal from "../components/InvoiceDetailModal";
 import ReportsPanel from "../components/ReportsPanel";
 import ListenButton from "../components/ListenButton";
 import VoiceQueryButton from "../components/VoiceQueryButton";
+import { useLanguage } from "../context/LanguageContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Language codes the trader's `language_pref` column can hold, paired with
+// the name each language calls itself. Endonyms are deliberately NOT run
+// through t(): a language picker has to be readable by someone who cannot
+// read the language the app is currently in — that is the whole point of
+// tapping it — so every option names itself in its own script, in every
+// locale. (Hindi labels itself in Devanagari even though this app's Hindi
+// copy is romanised Hinglish: हिंदी is the word a trader recognises.)
+const LANGUAGE_OPTIONS = [
+  { code: "en", label: "English" },
+  { code: "hi", label: "हिंदी" },
+  { code: "mr", label: "मराठी" },
+  { code: "gu", label: "ગુજરાતી" },
+];
+
+// BCP-47 tags for the Web Speech API's voice picker (utils/speech.js ->
+// pickVoice). This replaces the old `diagnosis_hi ? "hi-IN" : "en-IN"`
+// guess, which silently read Marathi and Gujarati traders their verdict in
+// a Hindi voice purely because a localized diagnosis string existed at all.
+const SPEECH_TAGS = { en: "en-IN", hi: "hi-IN", mr: "mr-IN", gu: "gu-IN" };
+
+function toSpeechTag(code) {
+  return SPEECH_TAGS[code] || SPEECH_TAGS.en;
+}
+
+// ITC verdict codes (backend/app/models/invoice.py::ITCStatus) plus the two
+// UI-only placeholders, mapped to their translated labels. An unrecognised
+// code falls through to the raw string rather than rendering blank — the
+// domain engine is the source of truth for what a verdict is called, and a
+// new one appearing here should look odd, not disappear.
+const STATUS_LABEL_KEYS = {
+  CONFIRMED: "tr_status_confirmed",
+  FIXABLE_BLOCKED: "tr_status_fixable_blocked",
+  AT_RISK: "tr_status_at_risk",
+  MISSED: "tr_status_missed",
+  INELIGIBLE: "tr_status_ineligible",
+  FRAUD_FLAGGED: "tr_status_fraud_flagged",
+  DUPLICATE: "tr_status_duplicate",
+  PROCESSING: "tr_status_processing",
+  PENDING: "tr_status_pending",
+};
 
 // Longest-edge size (px) a captured photo is downscaled to before the
 // on-device quality analysis runs. Keeps the Laplacian-variance pass fast
@@ -99,6 +141,7 @@ function analyzeImageFile(file) {
 }
 
 export default function TraderApp() {
+  const { t, lang: uiLang, changeLanguage, setProfileLanguage } = useLanguage();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [traderId, setTraderId] = useState(null);
@@ -116,6 +159,12 @@ export default function TraderApp() {
   const [queuedCount, setQueuedCount] = useState(0);
   const fileInputRef = useRef(null);
   const draining = useRef(false);
+  // Mirror of `traderLang` for the same reason applyUploadSuccess takes its
+  // trader id explicitly: the `online` listener below registers once on
+  // mount, so anything it calls closes over the mount-time `traderLang`
+  // ("hi") forever and would narrate a drained Gujarati trader's invoice in
+  // Hindi. A ref is always current.
+  const traderLangRef = useRef("hi");
 
   useEffect(() => {
     async function fetchDashboardData() {
@@ -125,9 +174,18 @@ export default function TraderApp() {
         const tradersData = await tradersRes.json();
         const activeTrader = tradersData.traders?.[0];
         const activeId = activeTrader?.id || "demo";
-        setTraderName(activeTrader?.business_name || activeTrader?.name || "My Business");
+        // Left blank rather than defaulted here so the "My Business"
+        // fallback can be translated at render time — this effect runs once
+        // on mount, before the language has been seeded below.
+        setTraderName(activeTrader?.business_name || activeTrader?.name || "");
         setTraderPhone(activeTrader?.whatsapp_number || null);
-        setTraderLang(activeTrader?.language_pref || "hi");
+        const pref = activeTrader?.language_pref || "hi";
+        setTraderLang(pref);
+        traderLangRef.current = pref;
+        // Seed the rendered UI from the language this trader already gave us
+        // over WhatsApp. LanguageProvider applies its own precedence: an
+        // explicit in-app pick (localStorage) outranks this.
+        setProfileLanguage(pref);
 
         const res = await authFetch(`${API_BASE}/api/v1/dashboard/summary/${activeId}`);
       if (res.ok) {
@@ -150,7 +208,9 @@ export default function TraderApp() {
       }
     }
     fetchDashboardData();
-  }, []);
+    // setProfileLanguage is a useCallback([]) on the provider, so listing it
+    // keeps this a genuine mount-only effect rather than silencing the rule.
+  }, [setProfileLanguage]);
 
   // mobile/App.tsx has requested notification permission and forwarded an
   // Expo push token here (window.postMessage, not the MunimNative bridge
@@ -281,25 +341,39 @@ export default function TraderApp() {
   // mount-time value (null) for the lifetime of the listener.
   function applyUploadSuccess(data, forTraderId) {
     const status = data.itc_verdict?.status || "PROCESSING";
+    // `diagnosis_hi` is misnamed: backend/app/services/gemini.py's
+    // generate_hindi_diagnosis() takes the trader's `language_pref` and asks
+    // the model for Marathi or Gujarati *script* accordingly, so whenever
+    // that field is populated the prose is in traderLang — not necessarily
+    // Hindi. `diagnosis_en` is the raw English verdict reason. Narration
+    // language follows the text itself, which is what both the TTS voice
+    // picker and the on-device re-narration actually need; the previous
+    // `diagnosis_hi ? "hi-IN" : "en-IN"` read Marathi and Gujarati traders
+    // their own verdict in a Hindi voice.
+    const narrationLang = data.diagnosis_hi ? traderLangRef.current : "en";
+    const message = data.diagnosis_hi || data.diagnosis_en || "";
     setScanState("success");
     setScanResult({
       invoiceId: data.invoice_id,
       status,
       itc_amount: data.itc_verdict?.itc_amount || 0,
-      message: data.diagnosis_hi || data.diagnosis_en || "Invoice processed!",
-      // Hint the TTS voice picker toward Hindi only when we actually got
-      // Hindi text back — otherwise fall back to English.
-      lang: data.diagnosis_hi ? "hi-IN" : "en-IN",
+      // Backend-localized prose stays in `message`; `messageKey` is for the
+      // strings this client owns and has to translate itself.
+      message,
+      messageKey: message ? null : "tr_invoice_processed",
+      lang: toSpeechTag(narrationLang),
       hsnHint: null,
       onDevice: false,
       // Soft geographic signal (backend/app/api/webhook.py) — this trader's
       // own scan history says this one is unusually far away. Kept out of
-      // `message` on purpose: that string also feeds ListenButton's TTS, and
-      // this note is English regardless of which language diagnosis_hi/en
-      // came back in. Never proof of anything, same honesty standard as the
-      // rest of the fraud engine — just a distance a CA can choose to look at.
-      locationNote: data.location_signal?.anomaly
-        ? `Scanned ~${data.location_signal.distance_from_usual_km}km from where you usually scan.`
+      // `message` on purpose: that string also feeds ListenButton's TTS,
+      // whereas this note renders in the UI language. Stored as a bare
+      // distance rather than a pre-built English sentence so it can be
+      // rendered through t() like everything else on this toast. Never proof
+      // of anything, same honesty standard as the rest of the fraud engine —
+      // just a distance a CA can choose to look at.
+      locationKm: data.location_signal?.anomaly
+        ? data.location_signal.distance_from_usual_km
         : null,
     });
     // A FRAUD_FLAGGED toast has to stay up until the trader deliberately
@@ -329,7 +403,7 @@ export default function TraderApp() {
       });
     }
 
-    narrateOnDevice(data);
+    narrateOnDevice(data, narrationLang);
   }
 
   // Re-narrates the verdict the backend already computed using the on-device
@@ -341,7 +415,7 @@ export default function TraderApp() {
   // only rephrases what's already decided. Best-effort: a missing
   // window.MunimNative (not running inside the native shell) or any
   // narration failure just leaves the backend-provided text in place.
-  function narrateOnDevice(data) {
+  function narrateOnDevice(data, narrationLang) {
     if (typeof window === "undefined" || !window.MunimNative?.isAvailable) return;
 
     const verdict = {
@@ -351,9 +425,11 @@ export default function TraderApp() {
       reason: data.itc_verdict?.reason,
       supplier_name: data.supplier_name,
     };
-    const lang = data.diagnosis_hi ? "hi" : "en";
     let text = "";
-    window.MunimNative.explainVerdict(verdict, lang, {
+    // Same language the backend's own prose came back in (see
+    // applyUploadSuccess) — the on-device model is re-phrasing that verdict,
+    // not switching the trader to a different language mid-toast.
+    window.MunimNative.explainVerdict(verdict, narrationLang, {
       onToken: (token) => {
         text += token;
         setScanResult((prev) => (prev?.invoiceId === data.invoice_id ? { ...prev, message: text, onDevice: true } : prev));
@@ -381,10 +457,9 @@ export default function TraderApp() {
     await refreshQueuedCount();
     setScanState("queued");
     setScanResult({
-      message:
-        reason === "offline"
-          ? "No connection — invoice queued. It'll upload automatically once you're back online."
-          : "Upload didn't finish in time (slow connection?) — invoice queued and will retry automatically.",
+      // A key, not a sentence: the toast can outlive a language change, and
+      // resolving at render keeps it in whatever language is showing now.
+      messageKey: reason === "offline" ? "tr_queued_offline_msg" : "tr_queued_slow_msg",
     });
     setTimeout(() => {
       setScanState("idle");
@@ -392,10 +467,23 @@ export default function TraderApp() {
     }, 8000);
   }
 
+  // Shapes a failed upload response into a scanResult. The backend's
+  // `detail` is English (FastAPI HTTPException text) and translating it
+  // belongs on the backend, not here — so it is passed through verbatim only
+  // when it carries something a generic translated message would lose. The
+  // one failure worth naming in the trader's own language is the Gemini
+  // quota wall: it is by far the most common one on a demo key, and "try
+  // again tomorrow" is an instruction, not a diagnostic.
+  function uploadErrorResult(data, fallbackKey) {
+    const detail = typeof data?.detail === "string" ? data.detail : "";
+    if (/limit|quota/i.test(detail)) return { messageKey: "tr_quota_reached" };
+    return detail ? { message: detail } : { messageKey: fallbackKey };
+  }
+
   async function handleInvoiceUpload(file, options = {}) {
     if (!file || !traderId || traderId === "demo") {
       setScanState("error");
-      setScanResult({ message: "No active trader. Please set up your GSTIN first." });
+      setScanResult({ messageKey: "tr_no_active_trader" });
       return;
     }
 
@@ -413,7 +501,7 @@ export default function TraderApp() {
         applyUploadSuccess(data, traderId);
       } else {
         setScanState("error");
-        setScanResult({ message: data.detail || "Processing failed. Try again." });
+        setScanResult(uploadErrorResult(data, "tr_processing_failed_retry"));
       }
     } catch (err) {
       // Network error or the UPLOAD_TIMEOUT_MS abort firing — either way the
@@ -451,7 +539,7 @@ export default function TraderApp() {
             applyUploadSuccess(data, item.metadata.trader_id);
           } else {
             setScanState("error");
-            setScanResult({ message: data.detail || "A queued invoice failed to process." });
+            setScanResult(uploadErrorResult(data, "tr_queued_invoice_failed"));
           }
         } catch (err) {
           break;
@@ -575,6 +663,26 @@ export default function TraderApp() {
     }
   };
 
+  // A scan result carries either backend prose (`message`, already in the
+  // trader's language) or a key this client owns (`messageKey`), never both.
+  const scanMessage = scanResult
+    ? scanResult.message || (scanResult.messageKey ? t(scanResult.messageKey) : "")
+    : "";
+  // Backend prose arrives with its own BCP-47 tag (applyUploadSuccess);
+  // anything this client wrote is in whatever language the UI is showing.
+  const scanMessageLang = scanResult?.message ? scanResult.lang : toSpeechTag(uiLang);
+
+  const statusLabel = (status) =>
+    STATUS_LABEL_KEYS[status] ? t(STATUS_LABEL_KEYS[status]) : status || t("tr_status_pending");
+
+  // utils/imageQuality.js returns its `reason` as an English sentence and is
+  // out of scope to change here, so the verdict is re-derived from the two
+  // numbers it also returns. Glare is checked first for the same reason the
+  // util checks it first: a blown-out region reads as low variance too, and
+  // glare is the more actionable diagnosis.
+  const retakeReasonKey = (verdict) =>
+    verdict?.glareRatio > GLARE_RATIO_THRESHOLD ? "tr_retake_glare" : "tr_retake_blur";
+
   return (
     <div className="flex flex-col min-h-screen pb-20">
       {/* Hidden file input — mobile camera capture */}
@@ -595,7 +703,7 @@ export default function TraderApp() {
       <header className="p-4 flex items-center justify-between border-b border-[var(--border-subtle)] bg-white sticky top-0 z-10">
         <div className="flex flex-col">
           <h1 className="text-xl font-bold tracking-tight text-black">Munim.ai</h1>
-          <span className="text-[10px] uppercase font-bold text-[var(--green-primary)] tracking-widest">Active</span>
+          <span className="text-[10px] uppercase font-bold text-[var(--green-primary)] tracking-widest">{t("tr_active")}</span>
         </div>
         <button className="p-2 -mr-2 text-black" onClick={() => setSidebarOpen(true)}>
           <Menu size={24} />
@@ -613,7 +721,7 @@ export default function TraderApp() {
             <div className="flex items-center justify-between p-5 border-b border-[var(--border-subtle)]">
               <div>
                 <p className="font-bold text-black text-base">Munim.ai</p>
-                <p className="text-xs text-[var(--text-secondary)] truncate max-w-[180px]">{traderName}</p>
+                <p className="text-xs text-[var(--text-secondary)] truncate max-w-[180px]">{traderName || t("tr_my_business")}</p>
               </div>
               <button onClick={() => setSidebarOpen(false)} className="p-1.5 rounded hover:bg-[var(--bg-primary)] transition-colors">
                 <X size={20} className="text-black" />
@@ -623,9 +731,9 @@ export default function TraderApp() {
             {/* Nav items */}
             <nav className="flex-1 p-4 space-y-1">
               {[
-                { id: "home",    label: "Dashboard",       icon: <Home size={18} /> },
-                { id: "history", label: "Invoice History",  icon: <FileText size={18} /> },
-                { id: "reports", label: "Reports & GSTR-2B", icon: <BarChart2 size={18} /> },
+                { id: "home",    label: t("tr_nav_dashboard"),       icon: <Home size={18} /> },
+                { id: "history", label: t("tr_nav_invoice_history"),  icon: <FileText size={18} /> },
+                { id: "reports", label: t("tr_nav_reports"), icon: <BarChart2 size={18} /> },
               ].map(item => (
                 <button
                   key={item.id}
@@ -642,6 +750,33 @@ export default function TraderApp() {
               ))}
             </nav>
 
+            {/* Language picker — the explicit in-app choice that outranks the
+                trader's saved language_pref (see LanguageContext's
+                setProfileLanguage). Lives in the drawer rather than behind a
+                settings screen because changing it is the first thing a
+                shopkeeper handed this phone does. */}
+            <div className="p-4 border-t border-[var(--border-subtle)]">
+              <p className="text-[10px] uppercase font-bold text-[var(--text-muted)] tracking-widest mb-2">
+                {t("tr_language")}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {LANGUAGE_OPTIONS.map((option) => (
+                  <button
+                    key={option.code}
+                    onClick={() => changeLanguage(option.code)}
+                    aria-pressed={uiLang === option.code}
+                    className={`py-2 rounded-lg text-sm font-bold transition-colors ${
+                      uiLang === option.code
+                        ? "bg-black text-white"
+                        : "border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-black"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Sign out -- the "Upload Invoice" button that used to live here
                 duplicated the main Scan Invoice action already available
                 from the bottom nav bar; this drawer had no way to log out
@@ -657,7 +792,7 @@ export default function TraderApp() {
                 }}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-black text-white font-bold text-sm hover:bg-gray-800 transition-colors"
               >
-                <LogOut size={16} /> Log Out
+                <LogOut size={16} /> {t("tr_log_out")}
               </button>
             </div>
           </div>
@@ -668,7 +803,7 @@ export default function TraderApp() {
       {checkingPhoto && (
         <div className="mx-4 mt-4 p-4 rounded-none border border-[var(--border-subtle)] bg-white flex items-center gap-3">
           <Loader2 size={18} className="animate-spin text-black flex-shrink-0" />
-          <p className="font-bold text-black text-sm">Checking photo quality on your device...</p>
+          <p className="font-bold text-black text-sm">{t("tr_checking_photo_quality")}</p>
         </div>
       )}
 
@@ -680,7 +815,10 @@ export default function TraderApp() {
         <div className="mx-4 mt-4 px-3 py-2 rounded-none border border-[var(--orange-primary)] bg-orange-50 flex items-center gap-2">
           <CloudOff size={14} className="text-[var(--orange-primary)] flex-shrink-0" />
           <p className="text-xs font-bold text-[var(--orange-primary)]">
-            {queuedCount} invoice{queuedCount > 1 ? "s" : ""} queued — will upload when back online
+            {/* Separate singular/plural keys rather than an English "s"
+                suffix — Hindi, Marathi and Gujarati do not pluralize by
+                appending a letter. */}
+            {queuedCount === 1 ? t("tr_queued_one") : t("tr_queued_many", { count: queuedCount })}
           </p>
         </div>
       )}
@@ -695,52 +833,54 @@ export default function TraderApp() {
           <div className="flex-1">
             {scanState === "uploading" && (
               <>
-                <p className="font-bold text-black text-sm">Processing invoice...</p>
-                <p className="text-xs text-[var(--text-secondary)]">Checking GSTIN, HSN codes, GSTR-2B match</p>
+                <p className="font-bold text-black text-sm">{t("tr_processing_invoice")}</p>
+                <p className="text-xs text-[var(--text-secondary)]">{t("tr_processing_checks")}</p>
               </>
             )}
             {scanState === "queued" && scanResult && (
               <>
-                <p className="font-bold text-[var(--orange-primary)] text-sm">Queued — Offline</p>
-                <p className="text-xs text-[var(--text-secondary)]">{scanResult.message}</p>
+                <p className="font-bold text-[var(--orange-primary)] text-sm">{t("tr_queued_offline_title")}</p>
+                <p className="text-xs text-[var(--text-secondary)]">{scanMessage}</p>
               </>
             )}
             {scanState === "success" && scanResult && (
               <>
                 <p className="font-bold text-black text-sm">
-                  Invoice Analyzed —{" "}
-                  <span className={statusColors[scanResult.status] || "text-black"}>{scanResult.status}</span>
+                  {t("tr_invoice_analyzed")} —{" "}
+                  <span className={statusColors[scanResult.status] || "text-black"}>
+                    {statusLabel(scanResult.status)}
+                  </span>
                 </p>
                 {scanResult.itc_amount > 0 && (
-                  <p className="text-xs font-bold text-black">ITC: ₹{scanResult.itc_amount.toLocaleString("en-IN")}</p>
+                  <p className="text-xs font-bold text-black">
+                    {t("tr_itc")}: ₹{scanResult.itc_amount.toLocaleString("en-IN")}
+                  </p>
                 )}
-                <p className="text-xs text-[var(--text-secondary)] mt-1">{scanResult.message}</p>
-                {scanResult.locationNote && (
-                  <p className="text-xs text-[var(--orange-primary)] mt-1">{scanResult.locationNote}</p>
+                <p className="text-xs text-[var(--text-secondary)] mt-1">{scanMessage}</p>
+                {scanResult.locationKm != null && (
+                  <p className="text-xs text-[var(--orange-primary)] mt-1">
+                    {t("tr_location_note", { km: scanResult.locationKm })}
+                  </p>
                 )}
-                <ListenButton text={scanResult.message} lang={scanResult.lang} className="mt-1.5" />
+                <ListenButton text={scanMessage} lang={scanMessageLang} className="mt-1.5" />
                 {scanResult.onDevice && (
                   <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-emerald-600 mt-1.5">
                     <Sparkles size={11} />
-                    Narrated on-device
+                    {t("tr_narrated_on_device")}
                   </p>
                 )}
                 {scanResult.hsnHint && (
                   <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)] mt-1.5">
                     <Sparkles size={11} />
-                    On-device HSN match: {scanResult.hsnHint.hsn_code} ({Math.round(scanResult.hsnHint.confidence * 100)}%)
+                    {t("tr_hsn_match")}: {scanResult.hsnHint.hsn_code} ({Math.round(scanResult.hsnHint.confidence * 100)}%)
                   </p>
                 )}
               </>
             )}
             {scanState === "error" && scanResult && (
               <>
-                <p className="font-bold text-[var(--red-primary)] text-sm">Processing Failed</p>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  {scanResult.message.includes("limit") || scanResult.message.includes("quota") 
-                    ? "API Usage Limit Reached. Please try again tomorrow or contact support." 
-                    : scanResult.message}
-                </p>
+                <p className="font-bold text-[var(--red-primary)] text-sm">{t("tr_processing_failed_title")}</p>
+                <p className="text-xs text-[var(--text-secondary)]">{scanMessage}</p>
               </>
             )}
           </div>
@@ -764,11 +904,11 @@ export default function TraderApp() {
               <VoiceQueryButton traderLang={traderLang} traderId={traderId} />
             </div>
             <div className="mb-2">
-              <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Financial Snapshot</h2>
+              <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">{t("tr_financial_snapshot")}</h2>
               <MoneyMeter summary={summary} apiBase={API_BASE} />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Required Actions</h2>
+              <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2">{t("tr_required_actions")}</h2>
               <ActionQueue traderId={traderId} apiBase={API_BASE} traderPhone={traderPhone} />
             </div>
           </>
@@ -776,9 +916,9 @@ export default function TraderApp() {
           <ReportsPanel traderId={traderId} apiBase={API_BASE} />
         ) : (
           <div>
-            <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-3">Invoice History</h2>
+            <h2 className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-3">{t("tr_invoice_history")}</h2>
             {invoiceHistory.length === 0 ? (
-              <div className="text-center py-12 text-[var(--text-muted)] text-sm">No invoices processed yet. Scan your first invoice!</div>
+              <div className="text-center py-12 text-[var(--text-muted)] text-sm">{t("tr_no_invoices_yet")}</div>
             ) : (
               <div className="space-y-2">
                 {invoiceHistory.map((inv, index) => (
@@ -789,7 +929,7 @@ export default function TraderApp() {
                   >
                     <div>
                       <div className="flex items-center gap-1">
-                        <p className="font-bold text-black text-sm">{inv.supplier_name || inv.gstin_supplier || "Unknown Supplier"}</p>
+                        <p className="font-bold text-black text-sm">{inv.supplier_name || inv.gstin_supplier || t("tr_unknown_supplier")}</p>
                         {inv.fraud_score >= 70 && <ShieldAlert size={12} className="text-[var(--red-primary)]" />}
                       </div>
                       <p className="text-xs text-[var(--text-muted)]">{inv.invoice_number} · {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("en-IN") : ""}</p>
@@ -800,7 +940,7 @@ export default function TraderApp() {
                         inv.itc_status === "CONFIRMED" ? "text-[var(--green-primary)]" :
                         inv.itc_status === "FIXABLE_BLOCKED" ? "text-[var(--orange-primary)]" :
                         "text-[var(--red-primary)]"
-                      }`}>{inv.itc_status || "PENDING"}</span>
+                      }`}>{statusLabel(inv.itc_status)}</span>
                     </div>
                   </div>
                 ))}
@@ -817,7 +957,7 @@ export default function TraderApp() {
           className={`flex-1 flex flex-col items-center justify-center gap-1 p-2 transition-colors ${activeTab === "history" ? "text-black" : "text-[var(--text-secondary)] hover:text-black"}`}
         >
           <FileText size={20} />
-          <span className="text-[10px] font-bold">History</span>
+          <span className="text-[10px] font-bold">{t("tr_history")}</span>
         </button>
         
         {/* Massive Scan Button */}
@@ -832,7 +972,7 @@ export default function TraderApp() {
             <Camera size={20} />
           )}
           <span className="font-bold text-sm">
-            {checkingPhoto ? "Checking Photo..." : scanState === "uploading" ? "Processing..." : "Scan Invoice"}
+            {checkingPhoto ? t("tr_checking_photo") : scanState === "uploading" ? t("tr_processing") : t("tr_scan_invoice")}
           </span>
         </button>
       </div>
@@ -858,9 +998,9 @@ export default function TraderApp() {
           <div className="w-full max-w-sm bg-white rounded-none border border-[var(--border-subtle)] p-6 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
               <ShieldAlert size={20} className="text-[var(--orange-primary)] flex-shrink-0" />
-              <h2 className="font-bold text-black text-base">Photo may not scan well</h2>
+              <h2 className="font-bold text-black text-base">{t("tr_photo_may_not_scan")}</h2>
             </div>
-            <p className="text-sm text-[var(--text-secondary)] mb-6">{retakePrompt.verdict.reason}</p>
+            <p className="text-sm text-[var(--text-secondary)] mb-6">{t(retakeReasonKey(retakePrompt.verdict))}</p>
 
             <div className="flex flex-col gap-2">
               <button
@@ -870,7 +1010,7 @@ export default function TraderApp() {
                 }}
                 className="w-full py-3 rounded-none bg-black text-white font-bold text-sm hover:bg-gray-800 transition-colors"
               >
-                Retake Photo
+                {t("tr_retake_photo")}
               </button>
               <button
                 onClick={() => {
@@ -880,12 +1020,12 @@ export default function TraderApp() {
                 }}
                 className="w-full py-3 rounded-none border border-[var(--border-subtle)] text-[var(--text-secondary)] font-bold text-sm hover:bg-[var(--bg-primary)] transition-colors"
               >
-                Upload Anyway
+                {t("tr_upload_anyway")}
               </button>
             </div>
 
             <p className="text-[10px] text-[var(--text-muted)] mt-4 text-center">
-              Checked on your device — no data was uploaded for this check.
+              {t("tr_checked_on_device")}
             </p>
           </div>
         </div>

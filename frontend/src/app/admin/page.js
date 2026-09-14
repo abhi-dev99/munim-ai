@@ -4,16 +4,26 @@ import { authFetch, adminHeaders, ensureAdminKey } from "@/src/app/utils/api";
 
 import { useState, useEffect } from "react";
 import { Trash2, Loader2, AlertCircle } from "lucide-react";
+import { PanelStateRow } from "../components/PanelState";
+import ToastStack, { useToasts } from "../components/Toast";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function AdminPage() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [traders, setTraders] = useState([]);
   const [selectedTrader, setSelectedTrader] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  // Deletion is irreversible, so it stays gated -- the gate is just no longer
+  // an OS confirm() box. `pending` is the request; null means no dialog.
+  const [pending, setPending] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const { toasts, toast, dismissToast } = useToasts();
 
   // Ops surface: the delete endpoints below are gated on X-Admin-Key, which
   // is no longer baked into the bundle -- prompt for it once per session.
@@ -35,17 +45,19 @@ export default function AdminPage() {
         }
       } catch (err) {
         console.error(err);
+        setError(err);
         setLoading(false);
       }
     }
     fetchTraders();
-  }, []);
+  }, [reloadKey]);
 
   useEffect(() => {
     if (!selectedTrader) return;
 
     async function fetchInvoices() {
       setLoading(true);
+      setError(null);
       // Switching traders invalidates whatever was selected for the last one --
       // the IDs wouldn't even belong to this trader's list any more.
       setSelectedIds(new Set());
@@ -56,16 +68,18 @@ export default function AdminPage() {
         setInvoices(data.invoices || []);
       } catch (err) {
         console.error(err);
+        // Swallowing this left an empty table reading "No invoices found",
+        // which is indistinguishable from a trader who genuinely has none.
+        setError(err);
+        setInvoices([]);
       } finally {
         setLoading(false);
       }
     }
     fetchInvoices();
-  }, [selectedTrader]);
+  }, [selectedTrader, reloadKey]);
 
-  async function handleDelete(id) {
-    if (!window.confirm("Are you sure you want to delete this invoice?")) return;
-
+  async function deleteOne(id) {
     try {
       const res = await authFetch(`${API_BASE}/api/v1/admin/invoices/${id}`, {
         method: "DELETE",
@@ -79,8 +93,12 @@ export default function AdminPage() {
         next.delete(id);
         return next;
       });
+      toast("Invoice deleted.", { variant: "success" });
     } catch (err) {
-      alert("Failed to delete invoice.");
+      toast("The invoice was not deleted — the server rejected the request. It is still in the list.", {
+        variant: "error",
+        title: "Delete failed",
+      });
     }
   }
 
@@ -99,10 +117,8 @@ export default function AdminPage() {
     );
   }
 
-  async function handleBulkDelete() {
-    const ids = Array.from(selectedIds);
+  async function bulkDelete(ids) {
     if (ids.length === 0) return;
-    if (!window.confirm(`Delete ${ids.length} selected invoice${ids.length > 1 ? "s" : ""}? This can't be undone.`)) return;
 
     setBulkDeleting(true);
     // Fired in parallel and settled individually rather than aborting the
@@ -136,7 +152,26 @@ export default function AdminPage() {
     setBulkDeleting(false);
 
     if (failedCount > 0) {
-      alert(`Deleted ${succeededIds.size} invoice(s). ${failedCount} failed -- still selected, try again.`);
+      toast(
+        `Deleted ${succeededIds.size} invoice${succeededIds.size === 1 ? "" : "s"}. ${failedCount} failed and ${failedCount === 1 ? "is" : "are"} still selected — try again.`,
+        { variant: "error", title: "Partly deleted", duration: 9000 }
+      );
+    } else {
+      toast(`Deleted ${succeededIds.size} invoice${succeededIds.size === 1 ? "" : "s"}.`, { variant: "success" });
+    }
+  }
+
+  // Both destructive paths funnel through the same dialog; nothing is deleted
+  // until onConfirm fires.
+  async function runPending() {
+    if (!pending) return;
+    setDeleting(true);
+    try {
+      if (pending.kind === "one") await deleteOne(pending.id);
+      else await bulkDelete(pending.ids);
+    } finally {
+      setDeleting(false);
+      setPending(null);
     }
   }
 
@@ -154,6 +189,7 @@ export default function AdminPage() {
           <select
             value={selectedTrader || ""}
             onChange={(e) => setSelectedTrader(e.target.value)}
+            aria-label="Select trader"
             className="p-2 border border-[var(--border-subtle)] bg-white font-bold"
           >
             {traders.map(t => (
@@ -166,11 +202,12 @@ export default function AdminPage() {
           <div className="flex items-center justify-between bg-black text-white px-5 py-3 rounded">
             <span className="text-sm font-bold">{selectedIds.size} selected</span>
             <button
-              onClick={handleBulkDelete}
+              onClick={() => setPending({ kind: "bulk", ids: Array.from(selectedIds) })}
               disabled={bulkDeleting}
+              aria-label={`Delete ${selectedIds.size} selected invoice${selectedIds.size === 1 ? "" : "s"}`}
               className="flex items-center gap-2 px-4 py-2 bg-[var(--red-primary)] hover:bg-red-600 disabled:opacity-50 text-white text-sm font-bold rounded transition-colors"
             >
-              {bulkDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+              {bulkDeleting ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Trash2 size={16} aria-hidden="true" />}
               <span>{bulkDeleting ? "Deleting..." : "Delete selected"}</span>
             </button>
           </div>
@@ -198,13 +235,23 @@ export default function AdminPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan="6" className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-black" /></td>
-                </tr>
+                <PanelStateRow colSpan={6} state="loading" rows={4} />
+              ) : error ? (
+                <PanelStateRow
+                  colSpan={6}
+                  state="error"
+                  error={error}
+                  title="Couldn't load invoices"
+                  onRetry={() => setReloadKey((k) => k + 1)}
+                />
               ) : invoices.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="p-8 text-center text-[var(--text-secondary)] font-medium">No invoices found.</td>
-                </tr>
+                <PanelStateRow
+                  colSpan={6}
+                  state="empty"
+                  icon={AlertCircle}
+                  title="No invoices found"
+                  message="This trader has no invoices stored."
+                />
               ) : (
                 invoices.map((inv) => (
                   <tr
@@ -225,11 +272,18 @@ export default function AdminPage() {
                     <td className="p-4 text-sm font-medium">{inv.itc_status}</td>
                     <td className="p-4 text-right">
                       <button
-                        onClick={() => handleDelete(inv.id)}
+                        onClick={() =>
+                          setPending({
+                            kind: "one",
+                            id: inv.id,
+                            label: `${inv.supplier_name || inv.gstin_supplier || "Unknown supplier"} · ₹${Number(inv.total_amount || 0).toLocaleString("en-IN")}${inv.invoice_date ? ` · ${inv.invoice_date.slice(0, 10)}` : ""}`,
+                          })
+                        }
                         className="p-2 text-[var(--red-primary)] hover:bg-red-50 transition-colors"
+                        aria-label={`Delete invoice from ${inv.supplier_name || inv.gstin_supplier || "unknown supplier"}`}
                         title="Delete Invoice"
                       >
-                        <Trash2 size={18} />
+                        <Trash2 size={18} aria-hidden="true" />
                       </button>
                     </td>
                   </tr>
@@ -239,6 +293,23 @@ export default function AdminPage() {
           </table>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!pending}
+        title={pending?.kind === "bulk" ? "Delete selected invoices?" : "Delete this invoice?"}
+        message={
+          pending?.kind === "bulk"
+            ? `This permanently removes ${pending.ids.length} invoice${pending.ids.length === 1 ? "" : "s"} and ${pending.ids.length === 1 ? "its" : "their"} ITC verdicts. It cannot be undone.`
+            : "This permanently removes the invoice and its ITC verdict. It cannot be undone."
+        }
+        detail={pending?.kind === "one" ? pending.label : undefined}
+        confirmLabel={pending?.kind === "bulk" ? `Delete ${pending.ids.length}` : "Delete"}
+        busy={deleting || bulkDeleting}
+        onConfirm={runPending}
+        onCancel={() => setPending(null)}
+      />
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -158,8 +158,8 @@ export default function GSTR2BUpload({ traderId, apiBase, onUploadComplete }) {
                   Period: {months.find(m => m.v === result.month)?.l} {result.year}
                 </p>
               </div>
-              <button onClick={() => setResult(null)} className="text-[var(--green-primary)] opacity-50 hover:opacity-100 transition-opacity">
-                <X size={16} />
+              <button onClick={() => setResult(null)} aria-label="Dismiss the upload result" className="text-[var(--green-primary)] opacity-50 hover:opacity-100 transition-opacity">
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
             {/* Re-run reconciliation button */}
@@ -228,8 +228,8 @@ export default function GSTR2BUpload({ traderId, apiBase, onUploadComplete }) {
               <p className="text-sm font-bold text-[var(--red-primary)]">Upload Failed</p>
               <p className="text-xs text-[var(--red-primary)] opacity-80 mt-1 font-medium">{error}</p>
             </div>
-            <button onClick={() => setError(null)} className="ml-auto text-[var(--red-primary)] opacity-50 hover:opacity-100 transition-opacity">
-              <X size={16} />
+            <button onClick={() => setError(null)} aria-label="Dismiss this error" className="ml-auto text-[var(--red-primary)] opacity-50 hover:opacity-100 transition-opacity">
+              <X size={16} aria-hidden="true" />
             </button>
           </motion.div>
         )}

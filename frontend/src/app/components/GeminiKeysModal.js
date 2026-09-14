@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Key,
   ShieldCheck,
@@ -15,8 +15,12 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { adminHeaders } from "../utils/api";
+import useModalA11y from "./useModalA11y";
 
 export default function GeminiKeysModal({ isOpen, onClose, apiBase = "http://localhost:8000" }) {
+  const dialogRef = useRef(null);
+  useModalA11y(dialogRef, { active: isOpen, onClose });
+
   const [statusData, setStatusData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [newKey, setNewKey] = useState("");
@@ -106,7 +110,14 @@ export default function GeminiKeysModal({ isOpen, onClose, apiBase = "http://loc
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-gray-100">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gemini-keys-title"
+        tabIndex={-1}
+        className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-gray-100 outline-none"
+      >
         {/* Modal Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 text-white flex items-center justify-between border-b border-gray-700">
           <div className="flex items-center gap-3">
@@ -114,7 +125,7 @@ export default function GeminiKeysModal({ isOpen, onClose, apiBase = "http://loc
               <Key size={20} />
             </div>
             <div>
-              <h2 className="font-extrabold text-base tracking-tight flex items-center gap-2">
+              <h2 id="gemini-keys-title" className="font-extrabold text-base tracking-tight flex items-center gap-2">
                 <span>Gemini API Key Rotation Pool & Telemetry</span>
                 {statusData?.model && (
                   <span className="text-xs px-2 py-0.5 bg-gray-700/80 rounded-full font-mono font-normal text-gray-300">
@@ -132,15 +143,17 @@ export default function GeminiKeysModal({ isOpen, onClose, apiBase = "http://loc
               onClick={fetchStatus}
               disabled={loading}
               title="Refresh status"
+              aria-label="Refresh key pool status"
               className="p-2 hover:bg-gray-700/70 rounded-lg text-gray-300 hover:text-white transition-colors"
             >
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
             </button>
             <button
               onClick={onClose}
+              aria-label="Close API key pool dialog"
               className="p-2 hover:bg-gray-700/70 rounded-lg text-gray-300 hover:text-white transition-colors"
             >
-              <X size={18} />
+              <X size={18} aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -325,6 +338,7 @@ export default function GeminiKeysModal({ isOpen, onClose, apiBase = "http://loc
               <input
                 type="text"
                 placeholder="Paste Gemini API Key (AQ... or AIza...)"
+                aria-label="New Gemini API key"
                 value={newKey}
                 onChange={(e) => setNewKey(e.target.value)}
                 className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-mono text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"

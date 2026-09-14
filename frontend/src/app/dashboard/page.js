@@ -12,6 +12,7 @@ import Sidebar from "../components/Sidebar";
 import InvoiceFeed from "../components/InvoiceFeed";
 import GSTR2BUpload from "../components/GSTR2BUpload";
 import ReportsPanel from "../components/ReportsPanel";
+import MissedITCPanel from "../components/MissedITCPanel";
 import GeminiKeysModal from "../components/GeminiKeysModal";
 import OnboardTraderModal from "../components/OnboardTraderModal";
 import { useLanguage } from "../context/LanguageContext";
@@ -281,7 +282,7 @@ import { useRouter } from "next/navigation";
 
 export default function Home() {
   const router = useRouter();
-  const { t, lang, changeLanguage } = useLanguage();
+  const { t, lang, changeLanguage, setProfileLanguage } = useLanguage();
   const [activeTab, setActiveTab] = useState("money-meter");
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -455,8 +456,14 @@ export default function Home() {
       return;
     }
     const authTrader = JSON.parse(authUser);
+    // The stored auth row is the full traders record from verify-otp, so it
+    // carries language_pref — the language this person already chose during
+    // WhatsApp onboarding. Without this the DB preference and the UI language
+    // stay two unconnected systems: correct language on WhatsApp, English in
+    // the app. An explicit in-app pick still wins; see setProfileLanguage.
+    setProfileLanguage(authTrader.language_pref);
     fetchTraders(authTrader.id);
-  }, []);
+  }, [setProfileLanguage]);
 
   useEffect(() => {
     if (traderId) fetchSummary(traderId);
@@ -728,6 +735,13 @@ export default function Home() {
               )}
               {activeTab === "reports" && (
                 <ReportsPanel traderId={traderId} apiBase={API_BASE} />
+              )}
+
+              {/* Unclaimed credit sits on the money tab because it is a money
+                  figure, not a compliance one: credit the supplier already
+                  reported that this trader never took. */}
+              {activeTab === "money-meter" && (
+                <MissedITCPanel traderId={traderId} apiBase={API_BASE} />
               )}
 
               {/* Invoice feed — always visible on money-meter tab */}

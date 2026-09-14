@@ -91,6 +91,27 @@ export const askTraderQuestion = async (apiBase, traderId, question) => {
   return data.answer || "";
 };
 
+// Input tax credit a supplier has already reported to the portal but the
+// trader never claimed, i.e. GSTR-2B rows with no invoice matched to them.
+// Deliberately hits the read-only endpoint: /gstr2b/reconcile computes the
+// same figure but also writes match results and can fire vendor warnings,
+// so it must never be called just to render a number.
+export const getMissedItc = async (apiBase, traderId, month, year) => {
+  const qs = new URLSearchParams();
+  if (month) qs.set("month", String(month));
+  if (year) qs.set("year", String(year));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  const res = await authFetch(`${apiBase}/api/v1/gstr2b/missed-itc/${traderId}${suffix}`);
+  if (!res.ok) throw new Error(`Could not load unclaimed credit (HTTP ${res.status})`);
+  return res.json();
+};
+
+// A request that never settles is worse than one that fails: the panel spins
+// forever and the user cannot tell a slow network from a dead backend. Cloud
+// Run cold starts are the normal slow case here, so the ceiling is generous
+// rather than tight. Callers that already pass their own signal keep it.
+const DEFAULT_TIMEOUT_MS = 20000;
+
 export const authFetch = async (url, options = {}) => {
   options.cache = 'no-store';
   if (typeof window !== 'undefined') {
@@ -102,8 +123,30 @@ export const authFetch = async (url, options = {}) => {
       };
     }
   }
-  const res = await fetch(url, options);
-  
+
+  let timer;
+  if (!options.signal && typeof AbortController !== 'undefined') {
+    const controller = new AbortController();
+    options.signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), options.timeoutMs || DEFAULT_TIMEOUT_MS);
+  }
+  delete options.timeoutMs;
+
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (err) {
+    // Surface an abort as something a human can act on. Left raw it reads as
+    // "AbortError: signal is aborted without reason", which tells nobody
+    // anything -- and PanelState renders whatever message it is handed.
+    if (err?.name === 'AbortError') {
+      throw new Error('The server took too long to respond. It may be starting up — try again.');
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
   if (res.status === 401 && typeof window !== 'undefined') {
     // Prevent redirect loop if already on login page or dev portal
     if (window.location.pathname !== "/" && window.location.pathname !== "/dev") {

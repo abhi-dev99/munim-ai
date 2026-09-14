@@ -22,6 +22,8 @@ import {
   ToggleRight,
 } from "lucide-react";
 import { useLanguage } from "../../context/LanguageContext";
+import ToastStack, { useToasts } from "../../components/Toast";
+import { describeError } from "../../components/PanelState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -73,14 +75,25 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [traders, setTraders] = useState([]);
+  const [reminding, setReminding] = useState(null);
+  const { toasts, toast, dismissToast } = useToasts();
 
-  const handleSendReminder = async (traderId) => {
+  const handleSendReminder = async (traderId, traderName) => {
+    setReminding(traderId);
     try {
       const res = await authFetch(`${API_BASE}/api/v1/communications/remind-gstin/${traderId}`, { method: "POST" });
-      if (res.ok) alert("WhatsApp reminder sent to client!");
-      else alert("Failed to send reminder. Check client's phone number.");
+      if (res.ok) {
+        toast(`WhatsApp reminder sent to ${traderName || "the client"}.`, { variant: "success", title: "Reminder sent" });
+      } else {
+        toast("The reminder was not sent. Check that the client has a WhatsApp number on record.", {
+          variant: "error",
+          title: "Reminder failed",
+        });
+      }
     } catch (e) {
-      alert("Failed to send reminder.");
+      toast(describeError(e) || "The reminder could not be sent.", { variant: "error", title: "Reminder failed" });
+    } finally {
+      setReminding(null);
     }
   };
 
@@ -95,6 +108,13 @@ export default function ProfilePage() {
       if (!res.ok) throw new Error();
     } catch {
       setTraders((prev) => prev.map((t) => (t.id === traderId ? { ...t, is_composition: current } : t)));
+      // The optimistic toggle used to snap back with no explanation, which
+      // reads as a broken switch. Composition status gates ITC entirely, so a
+      // silent revert is the last thing this control should do.
+      toast("Composition status was not saved — the switch has been put back.", {
+        variant: "error",
+        title: "Not saved",
+      });
     }
   };
 
@@ -207,8 +227,14 @@ export default function ProfilePage() {
                           <div className="flex items-center justify-between">
                             <span>{t.gstin || "Not set"}</span>
                             {!t.gstin && (
-                              <button onClick={() => handleSendReminder(t.id)} className="ml-2 p-1 text-green-600 hover:bg-green-100 rounded" title="Send WhatsApp Reminder">
-                                <MessageCircle size={14} />
+                              <button
+                                onClick={() => handleSendReminder(t.id, t.name || t.business_name)}
+                                disabled={reminding === t.id}
+                                aria-label={`Send a WhatsApp reminder to ${t.name || t.business_name || "this client"} to share their GSTIN`}
+                                className="ml-2 p-1 text-green-600 hover:bg-green-100 rounded disabled:opacity-50"
+                                title="Send WhatsApp Reminder"
+                              >
+                                <MessageCircle size={14} aria-hidden="true" />
                               </button>
                             )}
                           </div>
@@ -217,13 +243,16 @@ export default function ProfilePage() {
                         <td className="px-4 py-3">
                           <button
                             onClick={() => handleToggleComposition(t.id, t.is_composition)}
+                            role="switch"
+                            aria-checked={!!t.is_composition}
+                            aria-label={`${t.name || t.business_name || "This client"} is a composition dealer`}
                             className="flex items-center gap-1.5 mx-auto text-gray-600 hover:text-gray-900 transition-colors"
                             title="Composition dealers can't claim ITC"
                           >
                             {t.is_composition ? (
-                              <ToggleRight size={20} className="text-[#10b981]" />
+                              <ToggleRight size={20} className="text-[#10b981]" aria-hidden="true" />
                             ) : (
-                              <ToggleLeft size={20} className="text-gray-400" />
+                              <ToggleLeft size={20} className="text-gray-400" aria-hidden="true" />
                             )}
                           </button>
                         </td>
@@ -300,6 +329,8 @@ export default function ProfilePage() {
           </section>
         </div>
       </main>
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

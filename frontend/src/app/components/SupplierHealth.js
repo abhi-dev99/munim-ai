@@ -343,6 +343,7 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
               onDragOver={(e) => e.preventDefault()}
               onDragEnd={handleCardSort}
               onClick={() => setFilterStatus(f)}
+              aria-pressed={filterStatus === f}
               className={`text-left bg-white rounded-xl border p-3 transition-all hover:shadow-sm cursor-grab active:cursor-grabbing ${
                 filterStatus === f
                   ? "border-emerald-500 ring-1 ring-emerald-500"
@@ -362,6 +363,7 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
             <input
               type="text"
               placeholder="Search supplier or GSTIN…"
+              aria-label="Search suppliers by name or GSTIN"
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-[#10b981] focus:ring-1 focus:ring-[#10b981]/20"

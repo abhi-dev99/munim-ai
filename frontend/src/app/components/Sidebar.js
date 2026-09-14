@@ -234,6 +234,9 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
             </div>
             <button
               onClick={() => setIsWhatsappEnabled(!isWhatsappEnabled)}
+              role="switch"
+              aria-checked={isWhatsappEnabled}
+              aria-label={t("nav_whatsapp_alerts")}
               className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${isWhatsappEnabled ? "bg-[#25D366]" : "bg-gray-300"}`}
             >
               <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${isWhatsappEnabled ? "translate-x-3.5" : "translate-x-0.5"}`} />

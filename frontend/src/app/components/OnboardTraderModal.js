@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { X, QrCode, XCircle, Copy, Check, ExternalLink } from "lucide-react";
 import { authFetch } from "../utils/api";
 import { extractJoinCode } from "../utils/onboardLink";
+import useModalA11y from "./useModalA11y";
 
 // No bundled WhatsApp asset anywhere in this repo -- a small hand-drawn
 // glyph avoids pulling in a new dependency or asset file for one icon.
@@ -29,6 +30,9 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
   const [webAppCopied, setWebAppCopied] = useState(false);
   const canvasRef = useRef(null);
   const webAppCanvasRef = useRef(null);
+  const dialogRef = useRef(null);
+
+  useModalA11y(dialogRef, { active: isOpen, onClose });
 
   // The web-app QR doesn't need a backend round trip at all -- it's just
   // this deployed frontend's own /trader route, computable the moment the
@@ -91,19 +95,27 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col overflow-hidden border border-gray-100">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="onboard-trader-title"
+        tabIndex={-1}
+        className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col overflow-hidden border border-gray-100 outline-none"
+      >
         <div className="px-5 py-4 bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 text-white flex items-center justify-between border-b border-gray-700">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-emerald-500/20 rounded-xl border border-emerald-500/30 text-[#10b981]">
-              <QrCode size={18} />
+              <QrCode size={18} aria-hidden="true" />
             </div>
-            <h2 className="font-extrabold text-sm tracking-tight">Onboard a New Trader</h2>
+            <h2 id="onboard-trader-title" className="font-extrabold text-sm tracking-tight">Onboard a New Trader</h2>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close onboarding dialog"
             className="p-2 hover:bg-gray-700/70 rounded-lg text-gray-300 hover:text-white transition-colors"
           >
-            <X size={18} />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
@@ -122,7 +134,7 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
               <div className="h-[140px] w-[140px] bg-gray-100 rounded-xl animate-pulse" />
             ) : deepLink ? (
               <>
-                <canvas ref={canvasRef} className="rounded-xl border border-gray-200" />
+                <canvas ref={canvasRef} role="img" aria-label="QR code that opens a WhatsApp chat with Munim to onboard this trader" className="rounded-xl border border-gray-200" />
                 {joinCode && (
                   <p className="text-xs text-gray-500 text-center">
                     Or send <span className="font-mono font-bold text-gray-700">JOIN-{joinCode}</span> manually
@@ -131,6 +143,7 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
                 <div className="w-full flex items-center gap-2">
                   <button
                     onClick={handleCopy}
+                    aria-label="Copy the WhatsApp onboarding link"
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors"
                   >
                     {copied ? <Check size={13} className="text-[#10b981]" /> : <Copy size={13} />}
@@ -138,6 +151,7 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
                   </button>
                   <button
                     onClick={() => goTo(deepLink)}
+                    aria-label="Open the WhatsApp onboarding link in a new tab"
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-[#25D366] hover:bg-[#20b858] text-black text-xs font-semibold rounded-lg transition-colors"
                   >
                     <ExternalLink size={13} />
@@ -154,12 +168,13 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
           {/* Option 2: straight to the web app -- computed client-side, no backend call, no WhatsApp needed */}
           <div className="flex flex-col items-center gap-3 flex-1 min-w-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/icon-192.png" alt="Munim" className="w-7 h-7 rounded-lg" />
+            <img src="/icons/icon-192.png" alt="Munim.ai logo" className="w-7 h-7 rounded-lg" />
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Munim web app</p>
-            <canvas ref={webAppCanvasRef} className="rounded-xl border border-gray-200" />
+            <canvas ref={webAppCanvasRef} role="img" aria-label="QR code that opens the Munim web app for this trader" className="rounded-xl border border-gray-200" />
             <div className="w-full flex items-center gap-2">
               <button
                 onClick={handleWebAppCopy}
+                aria-label="Copy the Munim web app link"
                 className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors"
               >
                 {webAppCopied ? <Check size={13} className="text-[#10b981]" /> : <Copy size={13} />}
@@ -167,6 +182,7 @@ export default function OnboardTraderModal({ isOpen, onClose, apiBase = "http://
               </button>
               <button
                 onClick={() => goTo(webAppLink)}
+                aria-label="Open the Munim web app in a new tab"
                 className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-900 hover:bg-gray-800 text-white text-xs font-semibold rounded-lg transition-colors"
               >
                 <ExternalLink size={13} />
