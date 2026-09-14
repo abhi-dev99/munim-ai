@@ -172,19 +172,30 @@ async def verify_otp(data: OTPVerify):
                 full_ca = db.table("traders").select("*").eq("ca_whatsapp_number", phone).execute()
                 trader = full_ca.data[0] if full_ca.data else None
     except Exception as e:
-        pass
+        # This used to swallow the error and still return 200 "Login
+        # successful." with a null token — the frontend stored the null and
+        # every subsequent call 401'd, bouncing the user back to login with
+        # nothing to explain why. A DB outage is a 503, not a login.
+        logger.error(f"verify_otp: trader lookup failed for {phone}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not reach the account service. Please try again in a moment.",
+        )
+
+    if not trader:
+        # OTP was valid but this number matches no trader row and is nobody's
+        # CA — there is no identity to mint a token for, so never claim success.
+        raise HTTPException(status_code=401, detail="No account is registered for this number.")
 
     import jwt
 
-    token = None
-    if trader:
-        payload = {
-            "sub": trader["id"],
-            "jti": str(uuid.uuid4()),
-            "exp": datetime.utcnow() + timedelta(days=365),
-            "iat": datetime.utcnow(),
-        }
-        token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    payload = {
+        "sub": trader["id"],
+        "jti": str(uuid.uuid4()),
+        "exp": datetime.utcnow() + timedelta(days=365),
+        "iat": datetime.utcnow(),
+    }
+    token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
     return {
         "message": "Login successful.",

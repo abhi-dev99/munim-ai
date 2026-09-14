@@ -44,12 +44,16 @@ class GSTR2BBulkUpload(BaseModel):
 
 @router.post("/upload")
 async def upload_gstr2b_json(payload: GSTR2BBulkUpload, current_trader_id: str = Depends(get_current_trader_id)):
-    if payload.trader_id != current_trader_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
     """
     Upload GSTR-2B records parsed from GST portal JSON export.
     Use this when you have the JSON data already parsed client-side.
     """
+    # trader_id arrives in the body, so verify_trader_access can't be wired in
+    # as a FastAPI dependency (it reads trader_id from the path) -- call it
+    # directly, the way webhook.py does. A raw equality check here rejected a
+    # CA uploading GSTR-2B for their own client, which is the CA's core job.
+    await verify_trader_access(payload.trader_id, current_trader_id)
+
     if not 1 <= payload.month <= 12:
         raise HTTPException(status_code=400, detail="month must be 1-12")
     if payload.year < 2020 or payload.year > date.today().year + 1:
@@ -103,19 +107,18 @@ async def upload_gstr2b_json(payload: GSTR2BBulkUpload, current_trader_id: str =
 
 @router.post("/upload-file/{trader_id}")
 async def upload_gstr2b_file(
-    trader_id: str,
     month: int = Form(...),
     year: int = Form(...),
     file: UploadFile = File(...),
-    current_trader_id: str = Depends(get_current_trader_id),
+    trader_id: str = Depends(verify_trader_access),
 ):
     """
     Upload GSTR-2B as a raw JSON file or Excel file (downloaded from GST portal).
     Handles the standard GST portal GSTR-2B formats.
     """
-    if trader_id != current_trader_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
+    # trader_id comes from the path, so the same dependency the read/clear/
+    # reconcile endpoints use applies here -- it allows the trader and any CA
+    # whose phone matches the trader's ca_whatsapp_number.
     is_excel = file.filename.endswith(('.xlsx', '.xls')) or "spreadsheet" in file.content_type or "excel" in file.content_type
     if not is_excel and file.content_type not in ("application/json", "text/plain", "application/octet-stream"):
         raise HTTPException(
@@ -381,6 +384,18 @@ def _normalize_date(date_str: str) -> Optional[str]:
         return None
 
 
+def _adjacent_periods(month: int, year: int) -> list[tuple[int, int]]:
+    """
+    Return (month, year) for M-1, M and M+1, rolling the year over in January
+    and December. Suppliers file late — a January invoice routinely turns up in
+    February's or March's GSTR-2B — so reconciling period M against period M's
+    2B alone can never match those.
+    """
+    previous = (12, year - 1) if month == 1 else (month - 1, year)
+    following = (1, year + 1) if month == 12 else (month + 1, year)
+    return [previous, (month, year), following]
+
+
 @router.post("/reconcile/{trader_id}")
 async def trigger_reconciliation(trader_id: str = Depends(verify_trader_access), month: int = None, year: int = None):
     """
@@ -407,10 +422,22 @@ async def trigger_reconciliation(trader_id: str = Depends(verify_trader_access),
         except Exception as e:
             logger.warning(f"Could not fetch auto_warn_vendors (migration missing?): {e}")
 
-        # Get all GSTR-2B records for this period
-        gstr2b_records = await get_gstr2b_records(trader_id, month, year)
+        # Get GSTR-2B records for this period AND its neighbours. The matcher's
+        # 15/30-day date windows can only narrow the candidate list it is given,
+        # so late-filed rows have to be fetched here or they can never match.
+        # get_gstr2b_records() filters on one period, hence one call per period.
+        gstr2b_records = []
+        seen_record_ids: set[str] = set()
+        for period_month, period_year in _adjacent_periods(month, year):
+            for rec in await get_gstr2b_records(trader_id, period_month, period_year):
+                record_id = str(rec.get("id"))
+                if record_id in seen_record_ids:
+                    continue  # same row can't be fed to the matcher twice
+                seen_record_ids.add(record_id)
+                gstr2b_records.append(rec)
+
         if not gstr2b_records:
-            return {"status": "no_2b_data", "message": "No GSTR-2B records found for this period. Please upload first.", "matched": 0}
+            return {"status": "no_2b_data", "message": "No GSTR-2B records found for this period or the months either side of it. Please upload first.", "matched": 0}
 
         # Get all invoices for this month — re-run reconciles everything
         invoices = await get_invoices_for_trader(trader_id, month, year)
@@ -428,23 +455,37 @@ async def trigger_reconciliation(trader_id: str = Depends(verify_trader_access),
                 except ValueError:
                     pass
 
-            records_obj.append(
-                GSTR2BRecord(
-                    record_id=str(r.get("id")),
-                    supplier_gstin=r.get("supplier_gstin", ""),
-                    invoice_number=r.get("invoice_number", ""),
-                    invoice_date=date_obj,
-                    taxable_value=float(r.get("taxable_value") or 0),
-                    igst=float(r.get("igst") or 0),
-                    cgst=float(r.get("cgst") or 0),
-                    sgst=float(r.get("sgst") or 0),
-                    record_type=r.get("record_type", "B2B"),
-                )
+            record = GSTR2BRecord(
+                record_id=str(r.get("id")),
+                supplier_gstin=r.get("supplier_gstin", ""),
+                invoice_number=r.get("invoice_number", ""),
+                invoice_date=date_obj,
+                taxable_value=float(r.get("taxable_value") or 0),
+                igst=float(r.get("igst") or 0),
+                cgst=float(r.get("cgst") or 0),
+                sgst=float(r.get("sgst") or 0),
+                record_type=r.get("record_type", "B2B"),
             )
+            # find_missed_itc() reads matched_invoice_id as "already claimed",
+            # and the constructor defaults it to None. Carry the stored value
+            # across or a row an adjacent month's run already matched would be
+            # reported back to the CA as unclaimed ITC.
+            record.matched_invoice_id = r.get("matched_invoice_id")
+            records_obj.append(record)
 
         matched_count = 0
         failed_invoices = []
-        consumed_ids: set[str] = set()  # match-exclusivity: each 2B record consumed once
+        # Match-exclusivity: each 2B record consumed once. Pre-consume rows
+        # already matched to an invoice outside this run — now that adjacent
+        # periods are fetched, reconciling January would otherwise re-point a
+        # 2B row February's run had legitimately matched, leaving two invoices
+        # claiming it. Rows matched to invoices inside this run stay free, since
+        # a re-run recomputes those from scratch.
+        invoice_ids_in_run = {str(i["id"]) for i in unmatched}
+        consumed_ids: set[str] = {
+            r.record_id for r in records_obj
+            if r.matched_invoice_id and str(r.matched_invoice_id) not in invoice_ids_in_run
+        }
         from app.api.communications import email_vendor_warning, whatsapp_vendor_warning
         from app.services.supabase_client import mark_gstr2b_record_matched
 
@@ -484,21 +525,46 @@ async def trigger_reconciliation(trader_id: str = Depends(verify_trader_access),
                     except Exception as warn_err:
                         logger.error(f"Auto-warning failed for {inv_id}: {warn_err}")
 
-        # Apply credit note netting
+        # Apply credit note netting. Count what actually landed, not what was
+        # attempted: credit_note_applied/credit_note_reason only exist if
+        # migrations/add_invoice_credit_note_and_notify.sql has been run, and
+        # reporting attempts told the CA that N notes were netted when the
+        # update had raised and been swallowed below.
         cn_updates = reconciler.net_credit_notes(records_obj, unmatched)
+        cn_applied = 0
+        cn_failed = 0
         for upd in cn_updates:
             try:
                 existing = db.table("invoices").select("itc_amount_eligible").eq("id", upd["invoice_id"]).execute()
-                if existing.data:
-                    current_itc = float(existing.data[0].get("itc_amount_eligible") or 0)
-                    new_itc = max(0.0, current_itc + upd["itc_delta"])
-                    db.table("invoices").update({
-                        "itc_amount_eligible": new_itc,
-                        "credit_note_applied": True,
-                        "credit_note_reason": upd["reason"],
-                    }).eq("id", upd["invoice_id"]).execute()
+                if not existing.data:
+                    cn_failed += 1
+                    logger.warning(f"Credit note target invoice {upd['invoice_id']} not found")
+                    continue
+                current_itc = float(existing.data[0].get("itc_amount_eligible") or 0)
+                new_itc = max(0.0, current_itc + upd["itc_delta"])
+                db.table("invoices").update({
+                    "itc_amount_eligible": new_itc,
+                    "credit_note_applied": True,
+                    "credit_note_reason": upd["reason"],
+                }).eq("id", upd["invoice_id"]).execute()
+                cn_applied += 1
             except Exception as cn_err:
+                cn_failed += 1
                 logger.warning(f"Credit note update failed: {cn_err}")
+
+        # B2B/B2BA rows nobody claimed: the supplier filed it, the trader paid
+        # the tax, and no invoice was ever matched against it. Scoped to the
+        # requested period — the neighbouring months were pulled in only to let
+        # late filings match, and their orphans belong to their own runs.
+        period_record_ids = {
+            str(r.get("id")) for r in gstr2b_records
+            if r.get("month") == month and r.get("year") == year
+        }
+        missed = [
+            r for r in reconciler.find_missed_itc(gstr2b_records=records_obj, consumed_ids=consumed_ids)
+            if r.record_id in period_record_ids
+        ]
+        missed_itc_value = sum(r.total_tax for r in missed)
 
         return {
             "status": "complete",
@@ -506,7 +572,10 @@ async def trigger_reconciliation(trader_id: str = Depends(verify_trader_access),
             "invoices_checked": len(unmatched),
             "newly_matched": matched_count,
             "gstr2b_records": len(gstr2b_records),
-            "credit_notes_applied": len(cn_updates),
+            "credit_notes_applied": cn_applied,
+            "credit_notes_failed": cn_failed,
+            "missed_itc_records": len(missed),
+            "missed_itc_value": round(missed_itc_value, 2),
             "failed_invoices": failed_invoices,
         }
 

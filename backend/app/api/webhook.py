@@ -34,7 +34,7 @@ from app.services.supabase_client import (
     get_recent_invoice_locations,
 )
 from app.services.gstin import is_valid_gstin_format
-from app.agents.invoice_agent import process_invoice
+from app.agents.invoice_agent import process_invoice, persist_gstr2b_backlink
 from app.models.invoice import ITCStatus
 from app.domain.reconciler import GSTR2BReconciler
 from app.utils.errors import safe_http_error
@@ -189,6 +189,15 @@ async def upload_invoice_direct(
             invoice_data["latitude"] = latitude
             invoice_data["longitude"] = longitude
         stored_invoice = await store_invoice(invoice_data)
+
+        # Close the match-exclusivity loop: the back-link is an FK to
+        # invoices(id), so it can only be written once the row exists.
+        # reconcile_gstr2b seeds consumed_ids from this column, so without
+        # it a later invoice can re-claim the same GSTR-2B record.
+        await persist_gstr2b_backlink(
+            stored_invoice["id"] if stored_invoice else None,
+            diagnosis.gstr2b_match,
+        )
 
         # Store line items
         if stored_invoice and inv_json and inv_json.line_items:
@@ -593,6 +602,15 @@ async def handle_invoice_message(phone: str, msg: dict):
             }
 
         stored_invoice = await store_invoice(invoice_data)
+
+        # Close the match-exclusivity loop: the back-link is an FK to
+        # invoices(id), so it can only be written once the row exists.
+        # reconcile_gstr2b seeds consumed_ids from this column, so without
+        # it a later invoice can re-claim the same GSTR-2B record.
+        await persist_gstr2b_backlink(
+            stored_invoice["id"] if stored_invoice else None,
+            diagnosis.gstr2b_match,
+        )
 
         # Store line items with HSN validation results
         if stored_invoice and inv_json and inv_json.line_items:

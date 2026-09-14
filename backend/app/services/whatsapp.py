@@ -210,7 +210,17 @@ async def mark_message_read(message_id: str) -> None:
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     """Verify webhook payload signature from Meta."""
     if not settings.meta_app_secret:
-        return True  # Skip verification in dev mode
+        # Fail closed everywhere but a dev box. A missing secret in a deployed
+        # environment is a misconfiguration, not permission to trust unsigned
+        # payloads — otherwise anyone who knows the ngrok/webhook URL can post
+        # a forged message and drive the bot.
+        if settings.environment == "development":
+            return True
+        logger.error(
+            "META_APP_SECRET is not configured outside development — "
+            "rejecting webhook payload rather than accepting it unverified"
+        )
+        return False
 
     expected = hmac.new(
         settings.meta_app_secret.encode(),

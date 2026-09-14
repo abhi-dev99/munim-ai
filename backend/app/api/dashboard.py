@@ -148,10 +148,29 @@ async def get_action_items(trader_id: str = Depends(verify_trader_access)):
 
 
 @router.patch("/actions/{invoice_id}/resolve")
-async def resolve_action_item(invoice_id: str):
+async def resolve_action_item(invoice_id: str, current_trader_id: str = Depends(get_current_trader_id)):
     """Mark an action item (invoice issue) as manually resolved by CA."""
     try:
         db = get_supabase()
+
+        # The path param here is an invoice, not a trader, so this endpoint
+        # can't bind `Depends(verify_trader_access)` the way the rest of this
+        # file does. Look the owning trader up first and then call the same
+        # check by hand, so the CA-vs-client access rules stay defined in one
+        # place (deps.py) rather than being re-implemented here.
+        owner_res = db.table("invoices").select("trader_id").eq("id", invoice_id).execute()
+        if not owner_res.data:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+
+        owner_trader_id = owner_res.data[0].get("trader_id")
+        if not owner_trader_id:
+            # An invoice with no owner can't be authorised against anybody,
+            # so refuse rather than fall through to an unscoped update.
+            logger.warning(f"Invoice {invoice_id} has no trader_id — refusing resolve")
+            raise HTTPException(status_code=403, detail="Not authorized to modify this invoice")
+
+        await verify_trader_access(owner_trader_id, current_trader_id)
+
         response = db.table("invoices").update({
             "itc_status": "RESOLVED",
             "status": "validated",
@@ -381,33 +400,12 @@ async def get_reports(trader_id: str = Depends(verify_trader_access)):
         raise safe_http_error(logger, "Failed to fetch generated reports", e)
 
 
-@router.post("/check-deadlines")
-async def check_deadlines():
-    """Check if any deadline is near and send WhatsApp alerts to trader and CA."""
-    from app.services.whatsapp import send_text_message
-    
-    # Normally this would fetch traders and their CAs from the database
-    # and calculate if a deadline is 1 day away.
-    # For demo purposes, we trigger the notification directly.
-    message = (
-        "⚠️ *GST Deadline Alert*\n\n"
-        "Tomorrow is the 11th. Your GSTR-1 is due!\n\n"
-        "Please review the pending Action Items on Munim.ai and clear them so your CA can file on time."
-    )
-    
-    ca_message = (
-        "⚠️ *GST Deadline Alert*\n\n"
-        "Client: Suryakant Optics\n"
-        "GSTR-1 is due tomorrow. The client has uncleared ITC flags on Munim.ai. Please follow up."
-    )
-    
-    # We log it or send to a test number.
-    # In production, iterate over db.table("traders") and check their deadlines.
-    # await send_text_message("TRADER_PHONE", message)
-    # await send_text_message("CA_PHONE", ca_message)
-    
-    logger.info("Checked deadlines. Sent WhatsApp alerts to trader and CA.")
-    return {"status": "success", "message": "Deadline alerts triggered successfully via WhatsApp."}
+# The POST /check-deadlines route was removed: it was unauthenticated, it
+# sent WhatsApp messages (real per-message cost on an open endpoint), and its
+# body was hardcoded demo text ("Tomorrow is the 11th") regardless of the
+# actual date. The real job is main.py's `deadline_alerts` APScheduler entry,
+# which runs on the 5th/10th/18th off live invoice data. Nothing in the
+# frontend or mobile app ever called the HTTP trigger.
 
 
 @router.get("/gstr3b/{trader_id}")
