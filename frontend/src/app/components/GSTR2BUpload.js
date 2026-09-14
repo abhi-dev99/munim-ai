@@ -13,6 +13,7 @@ export default function GSTR2BUpload({ traderId, apiBase, onUploadComplete }) {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [reconciling, setReconciling] = useState(false);
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [year, setYear] = useState(new Date().getFullYear());
   const [expanded, setExpanded] = useState(false);
@@ -166,16 +167,36 @@ export default function GSTR2BUpload({ traderId, apiBase, onUploadComplete }) {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
+              disabled={reconciling}
+              aria-busy={reconciling}
               onClick={async () => {
+                if (reconciling) return;
+                setReconciling(true);
                 try {
-                  const res = await authFetch(`${apiBase}/api/v1/gstr2b/reconcile/${traderId}?month=${month}&year=${year}`, { method: "POST" });
+                  // Reconciliation does two database writes per invoice, so a
+                  // full month runs for minutes. It has to opt out of the
+                  // default request timeout or it aborts halfway through,
+                  // leaving some invoices matched and the rest not.
+                  const res = await authFetch(
+                    `${apiBase}/api/v1/gstr2b/reconcile/${traderId}?month=${month}&year=${year}`,
+                    { method: "POST", timeoutMs: 600000 }
+                  );
                   const data = await res.json();
                   setResult(prev => ({ ...prev, reconciliation: data }));
-                } catch (e) { /* ignore */ }
+                } catch (e) {
+                  // Previously swallowed, so a failed run was indistinguishable
+                  // from one that simply found nothing.
+                  setResult(prev => ({
+                    ...prev,
+                    reconciliation: { detail: e?.message || "Reconciliation failed" },
+                  }));
+                } finally {
+                  setReconciling(false);
+                }
               }}
-              className="w-full text-sm font-bold py-2.5 px-4 bg-white text-black border border-[rgba(16,185,129,0.2)] rounded-lg shadow-sm hover:shadow-md transition-all"
+              className="w-full text-sm font-bold py-2.5 px-4 bg-white text-black border border-[rgba(16,185,129,0.2)] rounded-lg shadow-sm hover:shadow-md transition-all disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Re-run Reconciliation Engine
+              {reconciling ? "Reconciling — this can take a few minutes…" : "Re-run Reconciliation Engine"}
             </motion.button>
             {result.reconciliation && (
               <motion.div 

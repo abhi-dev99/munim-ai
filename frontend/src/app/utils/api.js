@@ -107,10 +107,19 @@ export const getMissedItc = async (apiBase, traderId, month, year) => {
 };
 
 // A request that never settles is worse than one that fails: the panel spins
-// forever and the user cannot tell a slow network from a dead backend. Cloud
-// Run cold starts are the normal slow case here, so the ceiling is generous
-// rather than tight. Callers that already pass their own signal keep it.
-const DEFAULT_TIMEOUT_MS = 20000;
+// forever and the user cannot tell a slow network from a dead backend.
+//
+// The ceiling has to clear this app's genuinely slow work, not just a typical
+// REST read. Invoice upload runs vision OCR through the LLM pipeline, report
+// generation and voice transcription are both model calls, and a Cloud Run
+// cold start sits on top of any of them. Two minutes covers all of those with
+// room to spare while still failing a dead backend in bounded time.
+//
+// Reconciliation is the exception and passes its own timeoutMs: it does two
+// database writes per invoice, so a full month of a few hundred invoices runs
+// for minutes by design. Anything long-running should opt in explicitly
+// rather than the default being stretched to fit the slowest thing here.
+const DEFAULT_TIMEOUT_MS = 120000;
 
 export const authFetch = async (url, options = {}) => {
   options.cache = 'no-store';
