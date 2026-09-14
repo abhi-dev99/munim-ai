@@ -282,6 +282,138 @@ async def get_gstr2b_records(trader_id: str = Depends(verify_trader_access), mon
         raise safe_http_error(logger, "Failed to fetch GSTR-2B records", e)
 
 
+@router.get("/missed-itc/{trader_id}")
+async def get_missed_itc(
+    trader_id: str = Depends(verify_trader_access),
+    month: int = None,
+    year: int = None,
+):
+    """
+    Input tax credit the supplier has already reported but the trader never
+    claimed — GSTR-2B rows with no invoice matched against them.
+
+    This is deliberately a READ. The reconcile endpoint computes the same
+    figure, but it also writes match results and can fire vendor warnings when
+    auto_warn_vendors is on, so a dashboard panel must never call it just to
+    display a number.
+    """
+    try:
+        db = get_supabase()
+
+        # Default to the newest period this trader actually has 2B data for,
+        # not to today. GSTR-2B for a month is published after the 14th of the
+        # next one, so "today" is routinely a period with nothing in it — and
+        # opening on an empty month reads as "no unclaimed credit" when the
+        # real answer is "we haven't looked at a month you have data for."
+        if not month or not year:
+            latest = (
+                db.table("gstr2b_records")
+                .select("month, year")
+                .eq("trader_id", trader_id)
+                .order("year", desc=True)
+                .order("month", desc=True)
+                .limit(1)
+                .execute()
+            ).data
+            if latest:
+                month = month or latest[0]["month"]
+                year = year or latest[0]["year"]
+            else:
+                now = date.today()
+                month = month or now.month
+                year = year or now.year
+
+        unmatched = (
+            db.table("gstr2b_records")
+            .select("*")
+            .eq("trader_id", trader_id)
+            .eq("month", month)
+            .eq("year", year)
+            .is_("matched_invoice_id", "null")
+            .execute()
+        ).data or []
+
+        total_2b = (
+            db.table("gstr2b_records")
+            .select("id", count="exact")
+            .eq("trader_id", trader_id)
+            .eq("month", month)
+            .eq("year", year)
+            .limit(1)
+            .execute()
+        ).count or 0
+
+        # An unmatched row only means "unclaimed" if matching has actually been
+        # persisted. The test has to be the very column being filtered on:
+        # invoices carry a gstr2b_match_status, but until the back-link fix
+        # landed nothing ever wrote gstr2b_records.matched_invoice_id, so a
+        # trader can have a fully reconciled invoice set and still show every
+        # 2B row as unmatched. Checking the invoice side would report the whole
+        # 2B value as unclaimed credit — confidently, and wrongly.
+        linked_count = (
+            db.table("gstr2b_records")
+            .select("id", count="exact")
+            .eq("trader_id", trader_id)
+            .eq("month", month)
+            .eq("year", year)
+            .not_.is_("matched_invoice_id", "null")
+            .limit(1)
+            .execute()
+        ).count or 0
+        reconciled = linked_count > 0
+
+        gstins = {r.get("supplier_gstin") for r in unmatched if r.get("supplier_gstin")}
+        names: dict[str, str] = {}
+        if gstins:
+            sup = (
+                db.table("suppliers")
+                .select("gstin, legal_name, trade_name")
+                .in_("gstin", list(gstins))
+                .execute()
+            ).data or []
+            names = {
+                s["gstin"]: (s.get("trade_name") or s.get("legal_name") or "")
+                for s in sup
+                if s.get("gstin")
+            }
+
+        records = []
+        for r in unmatched:
+            tax = float(r.get("igst") or 0) + float(r.get("cgst") or 0) + float(r.get("sgst") or 0)
+            taxable = float(r.get("taxable_value") or 0)
+            records.append({
+                "record_id": r.get("id"),
+                "supplier_gstin": r.get("supplier_gstin"),
+                "supplier_name": names.get(r.get("supplier_gstin")) or "Unknown supplier",
+                "invoice_number": r.get("invoice_number"),
+                "invoice_date": r.get("invoice_date"),
+                "taxable_value": round(taxable, 2),
+                "tax": round(tax, 2),
+                "total": round(taxable + tax, 2),
+            })
+
+        records.sort(key=lambda x: x["tax"], reverse=True)
+
+        return {
+            "period": f"{month}/{year}",
+            "month": month,
+            "year": year,
+            "reconciled": reconciled,
+            "note": None if reconciled else (
+                "No GSTR-2B row in this period carries a match yet, so every "
+                "row still counts as unmatched. Run reconciliation before "
+                "treating this figure as unclaimed credit."
+            ),
+            "gstr2b_records": total_2b,
+            "count": len(records),
+            "unclaimed_tax": round(sum(r["tax"] for r in records), 2),
+            "unclaimed_taxable": round(sum(r["taxable_value"] for r in records), 2),
+            "records": records,
+        }
+    except Exception as e:
+        raise safe_http_error(logger, "Failed to compute missed ITC", e)
+
+
 @router.delete("/records/{trader_id}")
 async def clear_gstr2b_records(month: int, year: int, trader_id: str = Depends(verify_trader_access)):
     """Clear GSTR-2B records for a specific month (to re-upload)."""

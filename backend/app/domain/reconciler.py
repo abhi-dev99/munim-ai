@@ -54,13 +54,27 @@ class GSTR2BReconciler:
 
     def __init__(
         self,
-        amount_tolerance: float = 0.02,
-        date_window_days: int = 30,
+        amount_tolerance: float = None,
+        date_window_days: int = None,
         strict_date_window_days: int = 15,
         exact_date_window_days: int = 180,
     ):
-        self.amount_tolerance = amount_tolerance
-        self.date_window_days = date_window_days
+        # config.py has always declared fuzzy_match_amount_tolerance and
+        # fuzzy_match_date_window_days, and nothing ever read them: both call
+        # sites construct this class with no arguments, so the literals below
+        # won and the env vars were inert. Someone tuning them would have seen
+        # no effect and concluded the matcher was broken. Resolved here, in one
+        # place, so a third call site cannot reintroduce the gap. Explicit
+        # arguments still win, which is what the unit tests rely on.
+        from app.config import get_settings
+
+        settings = get_settings()
+        self.amount_tolerance = (
+            settings.fuzzy_match_amount_tolerance if amount_tolerance is None else amount_tolerance
+        )
+        self.date_window_days = (
+            settings.fuzzy_match_date_window_days if date_window_days is None else date_window_days
+        )
         self.strict_date_window_days = strict_date_window_days
         # Sanity window for Pass 1. Indian invoice serials restart each
         # financial year, so supplier + number + amount on their own will

@@ -321,13 +321,26 @@ class FraudScorer:
         gstin_validation: Optional[GSTINValidation] = None,
         historical_amounts: Optional[list[float]] = None,
         supplier_invoice_numbers: Optional[list[str]] = None,
-        hard_threshold: int = 70,
-        soft_threshold: int = 40,
+        hard_threshold: int = None,
+        soft_threshold: int = None,
     ) -> FraudResult:
         """
         Compute composite fraud score from all available signals.
         Returns FraudResult with individual signal breakdowns.
+
+        The two thresholds default to config.py's fraud_score_hard_threshold /
+        fraud_score_soft_threshold, which were declared but never read — the
+        literals here won instead, so changing the env var did nothing. These
+        decide whether credit is withheld from a return, so they need to be
+        tunable without a code change. Explicit arguments still win.
         """
+        from app.config import get_settings
+
+        settings = get_settings()
+        if hard_threshold is None:
+            hard_threshold = settings.fraud_score_hard_threshold
+        if soft_threshold is None:
+            soft_threshold = settings.fraud_score_soft_threshold
         # Skip fraud scoring for Composition Scheme / Bill of Supply (Zero Tax)
         if not invoice.total_tax_amount or invoice.total_tax_amount == 0.0:
             return FraudResult(
