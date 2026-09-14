@@ -6,6 +6,8 @@ import { useState, useEffect, useRef } from "react";
 import { AlertTriangle, CheckCircle2, XCircle, Search, ChevronUp, ChevronDown, ArrowUpRight, X, FileText, ShieldAlert, ChevronRight } from "lucide-react";
 import InvoiceDetailModal from "./InvoiceDetailModal";
 import { useLanguage } from "../context/LanguageContext";
+import PanelState from "./PanelState";
+import useModalA11y from "./useModalA11y";
 
 const STATUS_CONFIG = {
   GOOD:     { labelKey: "sup_good_standing", chip: "bg-emerald-50 text-emerald-700 border-emerald-200",  dot: "bg-emerald-500", bar: "bg-emerald-500" },
@@ -46,23 +48,35 @@ function SupplierInvoiceOverlay({ supplier, apiBase, traderId, onClose }) {
   const { t } = useLanguage();
   const [invoices, setInvoices]           = useState([]);
   const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState(null);
+  const [reloadKey, setReloadKey]         = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [transitioning, setTransitioning] = useState(false);
+  const overlayRef                        = useRef(null);
+
+  // InvoiceDetailModal renders *inside* this overlay, so two focus traps would
+  // fight over Tab and Escape. Stand down while the inner modal is up; the trap
+  // re-arms (and re-focuses the close button) when it closes.
+  useModalA11y(overlayRef, { active: selectedIndex === null, onClose });
 
   useEffect(() => {
     if (!traderId || !supplier) return;
     setLoading(true);
+    setError(null);
     authFetch(`${apiBase}/api/v1/dashboard/invoices/${traderId}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`Server returned ${r.status} while loading this supplier's invoices.`);
+        return r.json();
+      })
       .then(data => {
         const all = (data.invoices || []).filter(
           inv => inv.gstin_supplier === supplier.gstin || inv.supplier_name === supplier.name
         ).sort((a, b) => new Date(b.processed_at) - new Date(a.processed_at));
         setInvoices(all);
       })
-      .catch(() => setInvoices([]))
+      .catch(err => { setInvoices([]); setError(err); })
       .finally(() => setLoading(false));
-  }, [supplier, traderId, apiBase]);
+  }, [supplier, traderId, apiBase, reloadKey]);
 
   function navigate(newIndex) {
     setTransitioning(true);
@@ -72,10 +86,17 @@ function SupplierInvoiceOverlay({ supplier, apiBase, traderId, onClose }) {
   const cfg = STATUS_CONFIG[supplier.status];
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-900/50 p-2 md:p-8 backdrop-blur-md transition-all duration-300 ease-in-out">
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="supplier-overlay-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-40 flex items-center justify-center bg-gray-900/50 p-2 md:p-8 backdrop-blur-md transition-all duration-300 ease-in-out outline-none"
+    >
       {/* Outside Navigation - Close */}
-      <button onClick={onClose} className="absolute top-4 right-4 md:top-8 md:right-8 z-[60] p-4 text-white/70 hover:text-white transition-all duration-300 ease-in-out">
-        <X size={32} />
+      <button onClick={onClose} aria-label="Close supplier invoices" className="absolute top-4 right-4 md:top-8 md:right-8 z-[60] p-4 text-white/70 hover:text-white transition-all duration-300 ease-in-out">
+        <X size={32} aria-hidden="true" />
       </button>
 
       {/* Main Card (Sharp Corners to match InvoiceDetailModal) */}
@@ -85,7 +106,7 @@ function SupplierInvoiceOverlay({ supplier, apiBase, traderId, onClose }) {
           <div className="flex items-center gap-3">
             <div className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
             <div>
-              <p className="font-bold text-gray-900 text-sm">{supplier.name}</p>
+              <p id="supplier-overlay-title" className="font-bold text-gray-900 text-sm">{supplier.name}</p>
               <p className="text-[10px] font-mono text-gray-400">{supplier.gstin}</p>
             </div>
             <span className={`ml-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
@@ -124,11 +145,22 @@ function SupplierInvoiceOverlay({ supplier, apiBase, traderId, onClose }) {
                 </div>
               ))}
             </div>
+          ) : error ? (
+            <PanelState
+              variant="inline"
+              state="error"
+              error={error}
+              title="Couldn't load these invoices"
+              onRetry={() => setReloadKey(k => k + 1)}
+            />
           ) : invoices.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2 py-20">
-              <FileText size={32} className="opacity-30" />
-              <p className="text-sm">{t("sup_no_invoices")}</p>
-            </div>
+            <PanelState
+              variant="inline"
+              state="empty"
+              icon={FileText}
+              title={t("sup_no_invoices")}
+              message="No invoices from this supplier have been processed yet."
+            />
           ) : (
             <div className="divide-y divide-gray-100">
               {invoices.map((inv, idx) => {
@@ -198,6 +230,8 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
   const { t } = useLanguage();
   const [suppliers, setSuppliers]     = useState([]);
   const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState(null);
+  const [reloadKey, setReloadKey]     = useState(0);
   const [search, setSearch]           = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [sortField, setSortField]     = useState("health");
@@ -211,8 +245,12 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
   useEffect(() => {
     if (!traderId) return;
     setLoading(true);
+    setError(null);
     authFetch(`${apiBase}/api/v1/dashboard/suppliers/${traderId}`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status} while loading supplier health.`);
+        return r.json();
+      })
       .then((data) => {
         const list = (data.suppliers || []).map((s) => ({
           id:            s.id,
@@ -228,9 +266,9 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
         }));
         setSuppliers(list);
       })
-      .catch(() => setSuppliers([]))
+      .catch((err) => { setSuppliers([]); setError(err); })
       .finally(() => setLoading(false));
-  }, [traderId, apiBase]);
+  }, [traderId, apiBase, reloadKey]);
 
   const handleSort = (field) => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -265,6 +303,18 @@ export default function SupplierHealth({ traderId, apiBase, onSwitchTab }) {
       <div className="flex-1 space-y-3">
         {[1,2,3,4,5].map(i => <div key={i} className="h-14 bg-gray-50 rounded-lg animate-pulse" />)}
       </div>
+    </div>
+  );
+
+  if (error) return (
+    <div className="w-full pt-2">
+      <PanelState
+        state="error"
+        error={error}
+        title="Supplier health unavailable"
+        message="Continuous supplier monitoring could not reach the server. No trust scores have been lost — they are recomputed on every load."
+        onRetry={() => setReloadKey(k => k + 1)}
+      />
     </div>
   );
 

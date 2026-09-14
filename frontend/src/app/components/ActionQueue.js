@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import { Phone, CheckCircle2, ShieldAlert, ArrowUpRight } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLanguage } from "../context/LanguageContext";
+import PanelState from "./PanelState";
 
 function WhatsAppIcon({ size = 14 }) {
   return (
@@ -25,7 +26,9 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
   const { t } = useLanguage();
   const [actions, setActions]   = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState(null);
   const [resolving, setResolving] = useState(null);
+  const [resolveError, setResolveError] = useState(null);
   const [filter, setFilter]     = useState("ALL");
   const [expanded, setExpanded] = useState(null);
 
@@ -35,8 +38,11 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
   }, [traderId, apiBase]);
 
   async function fetchActions() {
+    setLoading(true);
+    setError(null);
     try {
       const res = await authFetch(`${apiBase}/api/v1/dashboard/actions/${traderId}`);
+      if (!res.ok) throw new Error(`Server returned ${res.status} while loading the action queue.`);
       const data = await res.json();
       const list = (data.actions || []).map((a, i) => ({
         id:          a.id || i,
@@ -47,8 +53,9 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
         urgency:     (a.impact_amount || 0) > 20000 ? "CRITICAL" : (a.impact_amount || 0) > 10000 ? "HIGH" : "MEDIUM",
       }));
       setActions(list);
-    } catch {
+    } catch (err) {
       setActions([]);
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -56,10 +63,16 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
 
   async function handleResolve(id) {
     setResolving(id);
+    setResolveError(null);
     try {
-      await authFetch(`${apiBase}/api/v1/dashboard/actions/${id}/resolve`, { method: "PATCH" });
+      const res = await authFetch(`${apiBase}/api/v1/dashboard/actions/${id}/resolve`, { method: "PATCH" });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
       setActions(prev => prev.filter(a => a.id !== id));
-    } catch { /* ignore */ }
+    } catch {
+      // Swallowing this silently made "Resolve" look like it worked while the
+      // row stayed put -- say so inline instead.
+      setResolveError(id);
+    }
     finally { setResolving(null); }
   }
 
@@ -86,6 +99,21 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
             </div>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  // ── Error state ───────────────────────────────────────────────────────────
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <h2 className="text-base font-bold text-gray-900">{t("nav_action_queue")}</h2>
+        <PanelState
+          state="error"
+          error={error}
+          title="Action queue unavailable"
+          onRetry={fetchActions}
+        />
       </div>
     );
   }
@@ -158,8 +186,18 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
               >
                 {/* Main row */}
                 <div
-                  className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50/80 transition-colors ${idx < displayed.length - 1 && !isOpen ? "border-b border-gray-100" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isOpen}
+                  aria-label={`${action.supplier} — ${action.description}. ${t(cfg.labelKey)} priority.`}
+                  className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green-primary)] transition-colors ${idx < displayed.length - 1 && !isOpen ? "border-b border-gray-100" : ""}`}
                   onClick={() => setExpanded(isOpen ? null : action.id)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setExpanded(isOpen ? null : action.id);
+                    }
+                  }}
                 >
                   {/* Urgency dot */}
                   <div className={`w-2 h-2 rounded-full flex-none ${cfg.dot}`} />
@@ -186,6 +224,7 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
                   {/* Expand chevron */}
                   <ArrowUpRight
                     size={14}
+                    aria-hidden="true"
                     className={`text-gray-400 flex-none transition-transform ${isOpen ? "rotate-90" : ""}`}
                   />
                 </div>
@@ -255,6 +294,12 @@ export default function ActionQueue({ traderId, apiBase, traderPhone }) {
                         {resolving === action.id ? t("loading") : t("aq_resolve")}
                       </button>
                     </div>
+
+                    {resolveError === action.id && (
+                      <p role="alert" className="text-[11px] font-semibold text-[var(--red-primary)]">
+                        Could not mark this resolved — the server rejected the update. Try again.
+                      </p>
+                    )}
                   </motion.div>
                 )}
 

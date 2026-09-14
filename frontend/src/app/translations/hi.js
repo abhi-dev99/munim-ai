@@ -1,4 +1,8 @@
-// Hinglish translations
+// Hindi — written as romanised Hinglish (Latin script), matching how the
+// backend addresses Hindi-preference traders over WhatsApp
+// (backend/app/api/auth.py, dashboard.py::_get_fix_action). Deliberately NOT
+// Devanagari: the existing strings in this file set that convention and the
+// WhatsApp bot speaks the same way, so the two surfaces stay consistent.
 const hi = {
   // Navigation
   nav_money_meter: "Money Meter",
@@ -129,6 +133,80 @@ const hi = {
   fr_drop_or_click: "GSTR-2B JSON/Excel yahan chode · ya click karein",
   fr_upload_start: "Shuru karne ke liye GSTR-2B upload karein",
   fr_ready_to_file: "File karne ke liye taiyaar!",
+
+  // --- Trader PWA (/trader) -------------------------------------------
+  // Shell & drawer
+  tr_active: "Active",
+  tr_my_business: "Mera Business",
+  tr_language: "Bhasha",
+  tr_nav_dashboard: "Dashboard",
+  tr_nav_invoice_history: "Invoice History",
+  tr_nav_reports: "Reports aur GSTR-2B",
+  tr_log_out: "Log Out",
+
+  // Offline queue
+  tr_checking_photo_quality: "Aapke phone par photo quality check kar rahe hain…",
+  tr_queued_one: "1 invoice queue mein hai — online hote hi upload ho jayegi",
+  tr_queued_many: "{count} invoices queue mein hain — online hote hi upload ho jayengi",
+  tr_queued_offline_title: "Queue mein — Offline",
+  tr_queued_offline_msg:
+    "Connection nahi hai — invoice queue mein daal di. Online hote hi apne aap upload ho jayegi.",
+  tr_queued_slow_msg:
+    "Upload time par poora nahi hua (slow connection?) — invoice queue mein hai, apne aap dubara koshish hogi.",
+  tr_queued_invoice_failed: "Queue wali ek invoice process nahi ho payi.",
+
+  // Scan result toast
+  tr_processing_invoice: "Invoice process ho rahi hai…",
+  tr_processing_checks: "GSTIN, HSN code aur GSTR-2B match check kar rahe hain",
+  tr_invoice_analyzed: "Invoice Analyse Ho Gayi",
+  tr_itc: "ITC",
+  tr_narrated_on_device: "Phone par hi bola gaya",
+  tr_hsn_match: "Phone par HSN match",
+  tr_processing_failed_title: "Process Nahi Ho Payi",
+  tr_quota_reached: "API limit khatam ho gayi. Kal dubara koshish karein ya support se sampark karein.",
+  tr_invoice_processed: "Invoice process ho gayi!",
+  tr_no_active_trader: "Koi active trader nahi. Pehle apna GSTIN set karein.",
+  tr_processing_failed_retry: "Process nahi ho payi. Dubara koshish karein.",
+  tr_location_note: "Aap jahan aam taur par scan karte hain wahan se ~{km}km door scan hui.",
+
+  // ITC verdict status labels
+  tr_status_confirmed: "CONFIRMED",
+  tr_status_fixable_blocked: "BLOCKED — THEEK HO SAKTA HAI",
+  tr_status_at_risk: "RISK PAR",
+  tr_status_ineligible: "ELIGIBLE NAHI",
+  tr_status_fraud_flagged: "FRAUD KA SHAK",
+  tr_status_processing: "PROCESS HO RAHA HAI",
+  tr_status_pending: "PENDING",
+
+  // Home / history
+  tr_financial_snapshot: "Paise Ka Hisaab",
+  tr_required_actions: "Zaruri Kaam",
+  tr_invoice_history: "Invoice History",
+  tr_no_invoices_yet: "Abhi tak koi invoice nahi. Apni pehli invoice scan karein!",
+  tr_unknown_supplier: "Anjaan Supplier",
+  tr_history: "History",
+
+  // Scan button + on-device photo check
+  tr_checking_photo: "Photo Check Ho Rahi…",
+  tr_processing: "Process Ho Raha Hai…",
+  tr_scan_invoice: "Invoice Scan Karein",
+  tr_photo_may_not_scan: "Photo theek se scan nahi hogi",
+  tr_retake_glare:
+    "Bahut chamak hai — seedhi roshni ya flash invoice par na padne dein, phir dubara photo lein.",
+  tr_retake_blur:
+    "Photo dhundhli hai — camera sthir rakhein aur focus hone dein, phir dubara photo lein.",
+  tr_retake_photo: "Dubara Photo Lein",
+  tr_upload_anyway: "Phir Bhi Upload Karein",
+  tr_checked_on_device: "Aapke phone par hi check hui — is check ke liye koi data upload nahi hua.",
+
+  // --- Camera scanner (/trader/scanner) --------------------------------
+  sc_align_invoice: "Invoice ko frame ke andar rakhein",
+  sc_invoice_captured: "Invoice Capture Ho Gayi",
+  sc_extracted_synced: "Munim.ai ne data nikaal kar aapke CA ke dashboard se sync kar diya hai.",
+  sc_supplier: "Supplier",
+  sc_amount: "Rakam",
+  sc_gstin: "GSTIN",
+  sc_scan_another: "Ek Aur Invoice Scan Karein",
 
   // Common
   loading: "Load ho raha hai…",

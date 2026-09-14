@@ -3,8 +3,11 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import en from "../translations/en";
 import hi from "../translations/hi";
+import mr from "../translations/mr";
 
-const translations = { en, hi };
+// Gujarati (gu) is still missing a translation file; a trader whose
+// language_pref is "gu" falls back to English until one lands here.
+const translations = { en, hi, mr };
 
 const LanguageContext = createContext();
 
@@ -15,7 +18,9 @@ export function LanguageProvider({ children }) {
   useEffect(() => {
     // Load preferred language from localStorage on mount
     const savedLang = localStorage.getItem("preferred_language");
-    if (savedLang && (savedLang === "en" || savedLang === "hi")) {
+    // Validate against what actually ships rather than a hardcoded pair, so
+    // adding a translation file is the only step needed to enable a language.
+    if (savedLang && Object.keys(translations).includes(savedLang)) {
       setLang(savedLang);
     }
     setMounted(true);

@@ -1,4 +1,7 @@
-// English (default)
+// English (default) — this file is the canonical key set. Every other
+// language file (hi/mr/gu) must define exactly these keys; LanguageContext's
+// t() falls back to this file when a key is missing elsewhere and warns in
+// development when it is missing from here too.
 const en = {
   // Navigation
   nav_money_meter: "Money Meter",
@@ -129,6 +132,80 @@ const en = {
   fr_drop_or_click: "Drop GSTR-2B JSON/Excel · or click",
   fr_upload_start: "Upload GSTR-2B to start",
   fr_ready_to_file: "Ready to file!",
+
+  // --- Trader PWA (/trader) -------------------------------------------
+  // Shell & drawer
+  tr_active: "Active",
+  tr_my_business: "My Business",
+  tr_language: "Language",
+  tr_nav_dashboard: "Dashboard",
+  tr_nav_invoice_history: "Invoice History",
+  tr_nav_reports: "Reports & GSTR-2B",
+  tr_log_out: "Log Out",
+
+  // Offline queue
+  tr_checking_photo_quality: "Checking photo quality on your device…",
+  tr_queued_one: "1 invoice queued — will upload when back online",
+  tr_queued_many: "{count} invoices queued — will upload when back online",
+  tr_queued_offline_title: "Queued — Offline",
+  tr_queued_offline_msg:
+    "No connection — invoice queued. It'll upload automatically once you're back online.",
+  tr_queued_slow_msg:
+    "Upload didn't finish in time (slow connection?) — invoice queued and will retry automatically.",
+  tr_queued_invoice_failed: "A queued invoice failed to process.",
+
+  // Scan result toast
+  tr_processing_invoice: "Processing invoice…",
+  tr_processing_checks: "Checking GSTIN, HSN codes, GSTR-2B match",
+  tr_invoice_analyzed: "Invoice Analyzed",
+  tr_itc: "ITC",
+  tr_narrated_on_device: "Narrated on-device",
+  tr_hsn_match: "On-device HSN match",
+  tr_processing_failed_title: "Processing Failed",
+  tr_quota_reached: "API usage limit reached. Please try again tomorrow or contact support.",
+  tr_invoice_processed: "Invoice processed!",
+  tr_no_active_trader: "No active trader. Please set up your GSTIN first.",
+  tr_processing_failed_retry: "Processing failed. Try again.",
+  tr_location_note: "Scanned ~{km}km from where you usually scan.",
+
+  // ITC verdict status labels (raw codes come back from the domain engine)
+  tr_status_confirmed: "CONFIRMED",
+  tr_status_fixable_blocked: "BLOCKED — FIXABLE",
+  tr_status_at_risk: "AT RISK",
+  tr_status_ineligible: "INELIGIBLE",
+  tr_status_fraud_flagged: "FRAUD FLAGGED",
+  tr_status_processing: "PROCESSING",
+  tr_status_pending: "PENDING",
+
+  // Home / history
+  tr_financial_snapshot: "Financial Snapshot",
+  tr_required_actions: "Required Actions",
+  tr_invoice_history: "Invoice History",
+  tr_no_invoices_yet: "No invoices processed yet. Scan your first invoice!",
+  tr_unknown_supplier: "Unknown Supplier",
+  tr_history: "History",
+
+  // Scan button + on-device photo check
+  tr_checking_photo: "Checking Photo…",
+  tr_processing: "Processing…",
+  tr_scan_invoice: "Scan Invoice",
+  tr_photo_may_not_scan: "Photo may not scan well",
+  tr_retake_glare:
+    "Too much glare — avoid direct light or flash reflecting off the invoice, then retake.",
+  tr_retake_blur: "Photo looks blurry — hold the camera steady and let it focus, then retake.",
+  tr_retake_photo: "Retake Photo",
+  tr_upload_anyway: "Upload Anyway",
+  tr_checked_on_device: "Checked on your device — no data was uploaded for this check.",
+
+  // --- Camera scanner (/trader/scanner) --------------------------------
+  sc_align_invoice: "Align invoice within frame",
+  sc_invoice_captured: "Invoice Captured",
+  sc_extracted_synced:
+    "Munim.ai has extracted the data and synced it with your CA's dashboard.",
+  sc_supplier: "Supplier",
+  sc_amount: "Amount",
+  sc_gstin: "GSTIN",
+  sc_scan_another: "Scan Another Invoice",
 
   // Common
   loading: "Loading…",
