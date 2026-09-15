@@ -18,9 +18,33 @@ from app.services.redis_cache import (
     revoke_token,
 )
 from app.api.deps import get_current_token_payload
+from app.services.phone import match_variants, normalize_msisdn
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
 logger = logging.getLogger(__name__)
+
+
+def _login_identity(raw: str) -> tuple[str, list[str]]:
+    """
+    Turn whatever somebody typed into the login box into (canonical, variants).
+
+    A person signing in types the number they know: ten digits, no country
+    code. `traders.whatsapp_number` may hold it either way, because rows reach
+    that table from onboarding, seed scripts and CSVs. Matching the typed
+    string directly meant a trader stored as `919822062252` simply could not
+    log in as `9822062252` -- the lookup found nothing, and the endpoint's
+    (correct) refusal to leak whether a number is registered meant they got
+    "if this number is registered, an OTP has been sent" and no OTP, forever,
+    with nothing to tell them what was wrong.
+
+    `canonical` is also what keys the OTP and the rate limiter. That matters
+    twice over: it means a code requested as `9822062252` verifies as
+    `+91 98220 62252`, and it closes a rate-limit bypass, since the three
+    spellings used to be three separate buckets.
+    """
+    canonical = normalize_msisdn(raw)
+    variants = match_variants(raw)
+    return canonical, variants
 
 def set_otp(phone: str, otp: str):
     r = get_redis()
@@ -62,7 +86,11 @@ class OTPVerify(BaseModel):
 
 @router.post("/request-otp")
 async def request_otp(data: OTPRequest):
-    phone = data.mobile_number.strip().replace("+", "").replace(" ", "")
+    phone, variants = _login_identity(data.mobile_number)
+    if not phone:
+        # Nothing dialable was typed. Same generic answer as an unregistered
+        # number -- this endpoint deliberately tells the caller nothing.
+        return {"message": "If this number is registered, an OTP has been sent via WhatsApp."}
 
     if not check_rate_limit(f"otp-req:{phone}", max_requests=3, window_seconds=300):
         raise HTTPException(status_code=429, detail="Too many OTP requests. Please wait a few minutes and try again.")
@@ -76,8 +104,10 @@ async def request_otp(data: OTPRequest):
 
     try:
         db = get_supabase()
-        res_trader = db.table("traders").select("id, language_pref").eq("whatsapp_number", phone).execute()
-        res_ca = db.table("traders").select("id, language_pref").eq("ca_whatsapp_number", phone).execute()
+        # Match every spelling the number might be stored under, not just the
+        # one that was typed.
+        res_trader = db.table("traders").select("id, language_pref").in_("whatsapp_number", variants).execute()
+        res_ca = db.table("traders").select("id, language_pref").in_("ca_whatsapp_number", variants).execute()
     except Exception as e:
         logger.error(f"DB Error: {e}")
         return GENERIC_RESPONSE
@@ -121,8 +151,12 @@ async def request_otp(data: OTPRequest):
 
 @router.post("/verify-otp")
 async def verify_otp(data: OTPVerify):
-    phone = data.mobile_number.strip().replace("+", "").replace(" ", "")
+    # Canonical form, so a code requested under one spelling verifies under
+    # another -- the OTP cache is keyed on this.
+    phone, variants = _login_identity(data.mobile_number)
     otp_submitted = data.otp.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Enter a valid mobile number.")
 
     if not check_rate_limit(f"otp-verify:{phone}", max_requests=5, window_seconds=300):
         raise HTTPException(status_code=429, detail="Too many attempts. Please request a new OTP.")
@@ -157,8 +191,8 @@ async def verify_otp(data: OTPVerify):
     roles = []
     try:
         db = get_supabase()
-        res_trader = db.table("traders").select("*").eq("whatsapp_number", phone).execute()
-        res_ca = db.table("traders").select("id").eq("ca_whatsapp_number", phone).execute()
+        res_trader = db.table("traders").select("*").in_("whatsapp_number", variants).execute()
+        res_ca = db.table("traders").select("id").in_("ca_whatsapp_number", variants).execute()
 
         if res_trader.data:
             trader = res_trader.data[0]
@@ -169,7 +203,7 @@ async def verify_otp(data: OTPVerify):
                 # No own-trader row -- this number only exists as a CA
                 # identifier, so fall back to the first client record the
                 # same way this endpoint always has.
-                full_ca = db.table("traders").select("*").eq("ca_whatsapp_number", phone).execute()
+                full_ca = db.table("traders").select("*").in_("ca_whatsapp_number", variants).execute()
                 trader = full_ca.data[0] if full_ca.data else None
     except Exception as e:
         # This used to swallow the error and still return 200 "Login
