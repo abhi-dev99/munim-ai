@@ -825,3 +825,113 @@ async def get_onboard_link(current_trader_id: str = Depends(get_current_trader_i
     except Exception as e:
         raise safe_http_error(logger, "Failed to build onboarding link", e)
 
+
+
+@router.get("/explain/{invoice_id}")
+async def explain_invoice_verdict(invoice_id: str, current_trader_id: str = Depends(get_current_trader_id)):
+    """
+    "Says who?" — the clause of the CGST Act behind one invoice's verdict.
+
+    The section number and its quoted words come from `domain/statute.py`, not
+    from a model. That is the whole point: a plausible-sounding section that
+    does not exist is worse on a compliance screen than no citation at all, so
+    a verdict this module cannot map returns `citation: null` and the UI says
+    so honestly.
+    """
+    from app.domain import statute
+
+    try:
+        db = get_supabase()
+        rows = db.table("invoices").select(
+            "id, trader_id, supplier_name, gstin_supplier, invoice_number, invoice_date, "
+            "itc_status, itc_block_reason, itc_amount_eligible, itc_amount_blocked, "
+            "gstr2b_match_status, fraud_score"
+        ).eq("id", invoice_id).limit(1).execute().data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+
+        invoice = rows[0]
+        owner = invoice.get("trader_id")
+        if not owner:
+            logger.warning(f"Invoice {invoice_id} has no trader_id — refusing explain")
+            raise HTTPException(status_code=403, detail="Not authorized to view this invoice")
+        await verify_trader_access(owner, current_trader_id)
+
+        reason = invoice.get("itc_block_reason")
+        status = invoice.get("itc_status")
+        citation = statute.cite_for_reason(reason)
+        # `derived` tells the UI how confident to be: a citation resolved from
+        # the engine's own reason string is traceable to the rule that fired;
+        # one inferred from the status alone is a reasonable guess about an
+        # older row, and should not be presented with the same certainty.
+        derived = "reason" if citation else None
+        if not citation:
+            citation = statute.cite_for_status(status)
+            derived = "status" if citation else None
+
+        return {
+            "invoice_id": invoice_id,
+            "status": status,
+            "reason": reason,
+            "supplier_name": invoice.get("supplier_name"),
+            "invoice_number": invoice.get("invoice_number"),
+            "invoice_date": invoice.get("invoice_date"),
+            "amount_eligible": invoice.get("itc_amount_eligible"),
+            "amount_blocked": invoice.get("itc_amount_blocked"),
+            "citation": citation.to_dict() if citation else None,
+            "citation_derived_from": derived,
+            "note": None if citation else (
+                "Munim cannot trace this verdict to a specific clause, so it is "
+                "not quoting one. The reason above is what the engine recorded."
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise safe_http_error(logger, f"Failed to explain invoice {invoice_id}", e)
+
+
+@router.get("/supplier-network/{trader_id}")
+async def get_supplier_network(trader_id: str = Depends(verify_trader_access)):
+    """
+    What every other business Munim monitors has experienced of this trader's
+    suppliers.
+
+    Strictly aggregate — see `domain/network_intel` for the three rules that
+    govern it. A supplier below the minimum cohort returns `available: false`
+    with the reason, because a stated absence is honest and a silent zero is
+    not.
+    """
+    from app.domain.network_intel import MIN_OTHER_TRADERS, bulk_network_signals
+
+    try:
+        db = get_supabase()
+        rows = db.table("invoices").select("gstin_supplier, supplier_name").eq(
+            "trader_id", trader_id
+        ).execute().data or []
+
+        names: dict[str, str] = {}
+        for r in rows:
+            g = r.get("gstin_supplier")
+            if g and g not in names:
+                names[g] = r.get("supplier_name") or ""
+
+        signals = bulk_network_signals(list(names), trader_id)
+        suppliers = [
+            {"gstin": g, "supplier_name": names.get(g) or "Unknown supplier", **sig}
+            for g, sig in signals.items()
+        ]
+        # Riskiest first; unavailable ones last. A CA scanning this wants the
+        # supplier the network is warning about at the top, not alphabetical order.
+        rank = {"RISKY": 0, "MIXED": 1, "CLEAN": 2, "UNKNOWN": 3}
+        suppliers.sort(key=lambda s: (rank.get(s.get("verdict"), 9), -(s.get("default_rate") or 0)))
+
+        return {
+            "trader_id": trader_id,
+            "min_other_traders": MIN_OTHER_TRADERS,
+            "suppliers": suppliers,
+            "reportable": sum(1 for s in suppliers if s.get("available")),
+            "flagged": sum(1 for s in suppliers if s.get("verdict") == "RISKY"),
+        }
+    except Exception as e:
+        raise safe_http_error(logger, "Failed to compute supplier network intelligence", e)

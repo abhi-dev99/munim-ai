@@ -14,6 +14,8 @@ import {
   TrendingUp,
   LogOut,
   UserCircle,
+  Briefcase,
+  Network,
 } from "lucide-react";
 import { useLanguage } from "../context/LanguageContext";
 import { BarChart, Bar, ResponsiveContainer, Tooltip, Cell } from "recharts";
@@ -53,7 +55,10 @@ function MiniSparkline({ data = [] }) {
 export default function Sidebar({ activeTab, onTabChange, actionCount = 0, traderId, apiBase, onTourClick, mobileOpen = false, onMobileClose = () => {} }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { t } = useLanguage();
+  // `lang` is used by the test-alert request below. It was previously left
+  // out of this destructure, so clicking "Send Test Alert" threw a
+  // ReferenceError before it ever reached the network.
+  const { t, lang } = useLanguage();
   const [isWhatsappEnabled, setIsWhatsappEnabled] = useState(false);
   const [testAlertSent, setTestAlertSent] = useState(false);
   const [testAlertLoading, setTestAlertLoading] = useState(false);
@@ -71,15 +76,27 @@ export default function Sidebar({ activeTab, onTabChange, actionCount = 0, trade
   }, [traderId, apiBase]);
 
   const navItems = [
+    // Practice sits first deliberately. It is the only view that answers
+    // "where do I start?" across the whole book; every other tab assumes a
+    // client has already been chosen, which is the second question.
+    { id: "practice",    label: t("nav_practice"),        icon: Briefcase        },
     { id: "money-meter", label: t("nav_money_meter"),     icon: LayoutDashboard },
     { id: "suppliers",   label: t("nav_supplier_trust"),  icon: Users            },
+    { id: "network",     label: t("net_title"),           icon: Network          },
     { id: "actions",     label: t("nav_action_queue"),    icon: AlertCircle, badge: actionCount },
     { id: "reports",     label: t("nav_monthly_reports"), icon: FileText         },
   ];
 
   // Default nav items are defined as navItems above. We filter and sort based on prefs.
-  const visibleNavItems = prefs 
-    ? prefs.map(id => navItems.find(i => i.id === id)).filter(Boolean)
+  // A stored preference lists the tabs that existed when it was saved, so
+  // filtering strictly by it would hide every tab added since -- permanently,
+  // and only for users who had ever reordered their sidebar. Honour the saved
+  // order, then append anything new at the end.
+  const visibleNavItems = prefs
+    ? [
+        ...prefs.map(id => navItems.find(i => i.id === id)).filter(Boolean),
+        ...navItems.filter(i => !prefs.includes(i.id)),
+      ]
     : navItems;
 
   const [authName, setAuthName] = useState("N");

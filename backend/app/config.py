@@ -90,6 +90,19 @@ class Settings(BaseSettings):
     # --- ngrok / Public URL ---
     public_url: str = ""  # ngrok or Railway URL
 
+    # Where the browser-facing app is served from. Used to build links that
+    # leave the system and are opened by someone who is not a user -- today
+    # that is the vendor fix link (app/api/vendor.py), which a supplier opens
+    # from WhatsApp. Getting this wrong in production does not fail loudly: it
+    # produces a link to localhost that the supplier simply cannot open, so
+    # `frontend_base_url` refuses to guess and falls back to `public_url`
+    # before the localhost default.
+    frontend_url: str = ""
+
+    @property
+    def frontend_base_url(self) -> str:
+        return (self.frontend_url or self.public_url or "http://localhost:3000").rstrip("/")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

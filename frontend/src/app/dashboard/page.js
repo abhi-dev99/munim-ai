@@ -13,6 +13,8 @@ import InvoiceFeed from "../components/InvoiceFeed";
 import GSTR2BUpload from "../components/GSTR2BUpload";
 import ReportsPanel from "../components/ReportsPanel";
 import MissedITCPanel from "../components/MissedITCPanel";
+import PracticePanel from "../components/PracticePanel";
+import SupplierNetworkPanel from "../components/SupplierNetworkPanel";
 import GeminiKeysModal from "../components/GeminiKeysModal";
 import OnboardTraderModal from "../components/OnboardTraderModal";
 import { useLanguage } from "../context/LanguageContext";
@@ -568,6 +570,8 @@ export default function Home() {
   };
 
   const tabLabels = {
+    "practice":    t("nav_practice"),
+    "network":     t("net_title"),
     "money-meter": t("nav_money_meter"),
     "suppliers":   t("nav_supplier_trust"),
     "actions":     t("nav_action_queue"),
@@ -711,11 +715,19 @@ export default function Home() {
             </div>
           </div>
         ) : (
+          /* The right rail holds widgets about the currently-selected client --
+             their supplier risk, their filing readiness, their GSTR-2B upload
+             box. The practice view is about the whole book and has no selected
+             client, so on that tab the rail is dropped and the content takes
+             the full width, rather than showing a CA one client's numbers
+             beside a list of all of them. */
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="flex-1 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_280px] gap-4 p-4 overflow-y-auto lg:overflow-hidden"
+            className={`flex-1 flex flex-col gap-4 p-4 overflow-y-auto lg:overflow-hidden ${
+              activeTab === "practice" ? "" : "lg:grid lg:grid-cols-[minmax(0,1fr)_280px]"
+            }`}
           >
             {/* Left (2/3) — Main content + Invoice Feed */}
             <motion.div
@@ -724,6 +736,25 @@ export default function Home() {
               transition={{ delay: 0.08, duration: 0.3 }}
               className="flex flex-col gap-4 lg:min-h-0 lg:overflow-hidden pr-1"
             >
+              {/* The practice view is the only tab that is not about the
+                  currently-selected client -- it is about all of them. Picking
+                  a client from it switches the rest of the dashboard to that
+                  client, which is what a CA means by "open" here. */}
+              {activeTab === "practice" && (
+                <PracticePanel
+                  apiBase={API_BASE}
+                  onOpenClient={(client) => {
+                    setTraderId(client.trader_id);
+                    setActiveTraderName(client.name || "");
+                    setActiveBusinessName(client.business_name || "");
+                    setActiveTraderGstin(client.gstin || "");
+                    setActiveTab("money-meter");
+                  }}
+                />
+              )}
+              {activeTab === "network" && (
+                <SupplierNetworkPanel traderId={traderId} apiBase={API_BASE} />
+              )}
               {activeTab === "money-meter" && (
                 <MoneyMeter summary={summary} apiBase={API_BASE} isComposition={isComposition} onSwitchTab={setActiveTab} prefs={fullPrefs} onSortTop={handleMoneyMeterSortTop} onSortBottom={handleMoneyMeterSortBottom} />
               )}
@@ -753,6 +784,7 @@ export default function Home() {
             </motion.div>
 
             {/* Right (1/3) — Supplier Risk + Filing Readiness */}
+            {activeTab !== "practice" && (
             <motion.div
               id="right-panel"
               initial={{ opacity: 0, x: 8 }}
@@ -762,6 +794,7 @@ export default function Home() {
             >
               {rightRailOrder.map((id, idx) => renderRightRailWidget(id, idx))}
             </motion.div>
+            )}
           </motion.div>
         )}
       </main>

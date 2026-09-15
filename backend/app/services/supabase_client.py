@@ -375,7 +375,14 @@ async def get_itc_summary(trader_id: str) -> dict:
             elif status in ["FIXABLE_BLOCKED", "FRAUD_FLAGGED", "DUPLICATE"]:
                 buckets["fixable_blocked"] += blocked
             elif status == "AT_RISK":
-                buckets["at_risk"] += eligible
+                # itc_engine records an AT_RISK verdict as eligible=total_tax,
+                # blocked=0 -- the credit is real, merely exposed. Rows written
+                # by the seed scripts use the opposite convention and put the
+                # figure in blocked. Reading only `eligible` reported this
+                # bucket as roughly nil for 103 of the 104 AT_RISK invoices in
+                # the database. Whichever column carries it is the number,
+                # because each convention leaves the other at zero.
+                buckets["at_risk"] += eligible or blocked
             elif status == "MISSED":
                 buckets["missed"] += eligible
             elif status == "INELIGIBLE":

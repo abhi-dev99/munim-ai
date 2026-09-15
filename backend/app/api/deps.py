@@ -41,6 +41,41 @@ def get_current_trader_id(authorization: str = Header(None)) -> str:
 
     return trader_id
 
+def _phone_variants(phone: str) -> list[str]:
+    """A CA's number is stored on their clients as `ca_whatsapp_number`, but
+    inconsistently — sometimes with the 91 country code, sometimes without.
+    Match on both rather than normalising the column, which would need a
+    migration this database has a backlog of already."""
+    phone = phone or ""
+    full = phone if phone.startswith("91") else f"91{phone}"
+    ten = phone[-10:] if len(phone) >= 10 else phone
+    return [v for v in {full, ten} if v]
+
+
+async def get_practice_client_ids(current_trader_id: str) -> list[str]:
+    """
+    Every trader the caller may act for: their own record, plus every client
+    that names their phone number as its CA.
+
+    Extracted because three places now need it (`/dashboard/traders`, the
+    practice view, and `verify_trader_access` itself) and a fourth copy of a
+    rule this load-bearing is how tenant-isolation bugs get in.
+    """
+    from app.services.supabase_client import get_supabase
+
+    db = get_supabase()
+    me = db.table("traders").select("whatsapp_number").eq("id", current_trader_id).execute()
+    if not me.data:
+        return []
+
+    ids = {current_trader_id}
+    variants = _phone_variants(me.data[0].get("whatsapp_number", ""))
+    if variants:
+        clients = db.table("traders").select("id").in_("ca_whatsapp_number", variants).execute()
+        ids.update(c["id"] for c in (clients.data or []) if c.get("id"))
+    return sorted(ids)
+
+
 async def verify_trader_access(trader_id: str, current_trader_id: str = Depends(get_current_trader_id)) -> str:
     if trader_id == current_trader_id:
         return trader_id

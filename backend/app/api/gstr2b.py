@@ -282,12 +282,11 @@ async def get_gstr2b_records(trader_id: str = Depends(verify_trader_access), mon
         raise safe_http_error(logger, "Failed to fetch GSTR-2B records", e)
 
 
-@router.get("/missed-itc/{trader_id}")
-async def get_missed_itc(
-    trader_id: str = Depends(verify_trader_access),
-    month: int = None,
-    year: int = None,
-):
+async def get_missed_itc_snapshot(
+    trader_id: str,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+) -> dict:
     """
     Input tax credit the supplier has already reported but the trader never
     claimed — GSTR-2B rows with no invoice matched against them.
@@ -296,6 +295,11 @@ async def get_missed_itc(
     figure, but it also writes match results and can fire vendor warnings when
     auto_warn_vendors is on, so a dashboard panel must never call it just to
     display a number.
+
+    Split out from the route so the recovery loop (`services/itc_recovery`)
+    computes the figure the same way the panel displays it, rather than growing
+    a second implementation that drifts. Authorisation stays on the route: this
+    function trusts the trader_id it is given.
     """
     try:
         db = get_supabase()
@@ -412,6 +416,60 @@ async def get_missed_itc(
         }
     except Exception as e:
         raise safe_http_error(logger, "Failed to compute missed ITC", e)
+
+
+@router.get("/missed-itc/{trader_id}")
+async def get_missed_itc(
+    trader_id: str = Depends(verify_trader_access),
+    month: int = None,
+    year: int = None,
+):
+    """Unclaimed credit for a period. See `get_missed_itc_snapshot`."""
+    return await get_missed_itc_snapshot(trader_id, month, year)
+
+
+class AskTraderRequest(BaseModel):
+    month: Optional[int] = None
+    year: Optional[int] = None
+    limit: int = 3
+
+
+@router.post("/missed-itc/{trader_id}/ask")
+async def ask_trader_for_missing_bills(
+    payload: AskTraderRequest,
+    trader_id: str = Depends(verify_trader_access),
+):
+    """
+    Ask the trader, over WhatsApp, whether they have the bills behind their
+    largest unclaimed credit.
+
+    This sends a real message to a real person, so it is a POST, it is never
+    called on render, and it refuses in every case where the question would be
+    wrong: nothing unclaimed, nothing reconciled yet, no number on file, or
+    already asked. The result says which, in words a CA can act on.
+    """
+    from app.services.itc_recovery import ask_trader
+
+    try:
+        result = await ask_trader(trader_id, payload.month, payload.year, payload.limit)
+        # Only "sent" means a message went out. Everything else is a reason
+        # nothing was sent, and the UI shows it as such rather than as success.
+        return {"trader_id": trader_id, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise safe_http_error(logger, "Failed to ask the trader about unclaimed bills", e)
+
+
+@router.get("/missed-itc/{trader_id}/requests")
+async def list_recovery_requests(trader_id: str = Depends(verify_trader_access)):
+    """Every bill we have asked this trader about, and what they said."""
+    from app.services.itc_recovery import summary_for
+
+    try:
+        return {"trader_id": trader_id, **summary_for(trader_id)}
+    except Exception as e:
+        raise safe_http_error(logger, "Failed to list recovery requests", e)
 
 
 @router.delete("/records/{trader_id}")

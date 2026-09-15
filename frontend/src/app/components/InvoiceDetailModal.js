@@ -6,6 +6,7 @@ import { X, CheckCircle2, AlertTriangle, ShieldAlert, FileText, Image as ImageIc
 import PanelState, { describeError } from "./PanelState";
 import ToastStack, { useToasts } from "./Toast";
 import useModalA11y from "./useModalA11y";
+import WhyBlocked from "./WhyBlocked";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -318,16 +319,26 @@ export default function InvoiceDetailModal({
             {/* ITC Status & Block Reason */}
             <h3 className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-widest mb-2 border-b border-[var(--border-subtle)] pb-1">Compliance Verdict</h3>
             
-            <div className="flex items-start gap-2 mb-3 p-3 bg-gray-50 border border-gray-100 rounded-none">
-              <div className="mt-0.5">
-                {getStatusIcon(invoice.itc_status)}
+            <div className="mb-3 bg-gray-50 border border-gray-100 rounded-none">
+              <div className="flex items-start gap-2 p-3">
+                <div className="mt-0.5">
+                  {getStatusIcon(invoice.itc_status)}
+                </div>
+                <div>
+                  <p className="text-sm font-black text-black">{getStatusLabel(invoice.itc_status)}</p>
+                  {invoice.itc_block_reason && !isAnalysisFailed && (
+                    <p className="text-xs font-medium text-[var(--text-secondary)] mt-0.5">{invoice.itc_block_reason}</p>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-black text-black">{getStatusLabel(invoice.itc_status)}</p>
-                {invoice.itc_block_reason && !isAnalysisFailed && (
-                  <p className="text-xs font-medium text-[var(--text-secondary)] mt-0.5">{invoice.itc_block_reason}</p>
-                )}
-              </div>
+
+              {/* The clause of the Act behind that verdict. Collapsed by
+                  default and fetched on open: a CA opening twenty invoices
+                  should not pay for twenty explanations they did not ask for.
+                  An invoice whose analysis failed has no verdict to justify. */}
+              {!isAnalysisFailed && (
+                <WhyBlocked invoiceId={invoice.id} apiBase={API_BASE} />
+              )}
             </div>
 
             {invoice.fraud_score > 0 && !isAnalysisFailed && (

@@ -438,6 +438,8 @@ from app.api.admin import router as admin_router
 from app.api.email_webhook import router as email_webhook_router
 from app.api.auth import router as auth_router
 from app.api.communications import router as communications_router
+from app.api.practice import router as practice_router
+from app.api.vendor import router as vendor_router
 
 # Mount routers
 app.include_router(auth_router)
@@ -449,6 +451,10 @@ app.include_router(reports_router)
 app.include_router(privacy_router)
 app.include_router(admin_router)
 app.include_router(communications_router)
+app.include_router(practice_router)
+# Public, unauthenticated by design -- see app/api/vendor.py for why that is
+# safe and what the signed token does instead of a login.
+app.include_router(vendor_router)
 
 
 @app.get("/")

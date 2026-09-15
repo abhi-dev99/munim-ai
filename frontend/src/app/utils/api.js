@@ -167,3 +167,101 @@ export const authFetch = async (url, options = {}) => {
   
   return res;
 };
+
+// --- The CA's practice view ---------------------------------------------
+//
+// Every client at once, ranked by rupees at risk. Slow by nature: it reads
+// every invoice and GSTR-2B row the practice owns, so the default 120s ceiling
+// applies rather than a shorter one.
+
+export const getPracticeOverview = async (apiBase) => {
+  const res = await authFetch(`${apiBase}/api/v1/practice/overview`);
+  if (!res.ok) throw new Error(`Could not load your practice (HTTP ${res.status})`);
+  return res.json();
+};
+
+export const getClientBrief = async (apiBase, traderId) => {
+  const res = await authFetch(`${apiBase}/api/v1/practice/client/${traderId}/brief`);
+  if (!res.ok) throw new Error(`Could not load this client's brief (HTTP ${res.status})`);
+  return res.json();
+};
+
+// --- Missed-ITC recovery -------------------------------------------------
+
+// Sends a real WhatsApp message to a real trader, so it is never called on
+// render. The response's `status` distinguishes "sent" from every reason
+// nothing was sent (not reconciled, nothing unclaimed, already asked, no
+// number on file) -- the caller must show that, not assume success.
+export const askTraderForMissingBills = async (apiBase, traderId, { month, year, limit } = {}) => {
+  const res = await authFetch(`${apiBase}/api/v1/gstr2b/missed-itc/${traderId}/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ month: month || null, year: year || null, limit: limit || 3 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Could not send the request (HTTP ${res.status})`);
+  return data;
+};
+
+export const getRecoveryRequests = async (apiBase, traderId) => {
+  const res = await authFetch(`${apiBase}/api/v1/gstr2b/missed-itc/${traderId}/requests`);
+  if (!res.ok) throw new Error(`Could not load recovery requests (HTTP ${res.status})`);
+  return res.json();
+};
+
+// --- Statutory citation --------------------------------------------------
+
+// "Says who?" for one invoice. `citation` may legitimately be null -- the
+// backend refuses to quote a clause it cannot trace the verdict to, and the
+// UI renders that absence rather than inventing a section number.
+export const explainInvoice = async (apiBase, invoiceId) => {
+  const res = await authFetch(`${apiBase}/api/v1/dashboard/explain/${invoiceId}`);
+  if (!res.ok) throw new Error(`Could not load the explanation (HTTP ${res.status})`);
+  return res.json();
+};
+
+// --- Network supplier intelligence ---------------------------------------
+
+export const getSupplierNetwork = async (apiBase, traderId) => {
+  const res = await authFetch(`${apiBase}/api/v1/dashboard/supplier-network/${traderId}`);
+  if (!res.ok) throw new Error(`Could not load supplier network data (HTTP ${res.status})`);
+  return res.json();
+};
+
+// --- Vendor fix links ----------------------------------------------------
+
+export const createVendorFixLink = async (apiBase, invoiceId) => {
+  const res = await authFetch(`${apiBase}/api/v1/vendor/link/${invoiceId}`, { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Could not create a link (HTTP ${res.status})`);
+  return data;
+};
+
+export const getVendorResponses = async (apiBase, traderId) => {
+  const res = await authFetch(`${apiBase}/api/v1/vendor/responses/${traderId}`);
+  if (!res.ok) throw new Error(`Could not load vendor responses (HTTP ${res.status})`);
+  return res.json();
+};
+
+// The two public ones. Deliberately plain fetch, not authFetch: the vendor
+// page is opened by a supplier who has no Munim account, and attaching a
+// stale Authorization header from whoever last used this browser would be
+// both pointless and a way to leak one.
+export const openVendorFix = async (apiBase, token) => {
+  const res = await fetch(`${apiBase}/api/v1/vendor/fix/${token}`, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "This link is not valid.");
+  return data;
+};
+
+export const submitVendorFix = async (apiBase, token, body) => {
+  const res = await fetch(`${apiBase}/api/v1/vendor/fix/${token}/respond`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "Could not record your answer.");
+  return data;
+};

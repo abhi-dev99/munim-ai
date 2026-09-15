@@ -204,6 +204,17 @@ async def upload_invoice_direct(
             from app.services.supabase_client import store_invoice_line_items
             await store_invoice_line_items(stored_invoice["id"], inv_json.line_items, diagnosis.hsn_validations)
 
+        # Same recovery-request close as the WhatsApp path: a trader asked for
+        # a missing bill may well answer by uploading it in the app instead of
+        # photographing it in the chat, and the request should close either way.
+        if stored_invoice:
+            from app.services.itc_recovery import note_invoice_uploaded
+            from app.services.supabase_client import get_supabase as _db
+            _t = (_db().table("traders").select("id, whatsapp_number, language_pref")
+                  .eq("id", trader_id).limit(1).execute()).data
+            if _t:
+                await note_invoice_uploaded(_t[0], stored_invoice)
+
         # Soft geographic signal -- see _check_location_anomaly's comment.
         # Always present in the response (None when there's no location or
         # not enough scan history yet) rather than an occasionally-missing
@@ -367,6 +378,16 @@ async def _handle_text_message_locked(phone: str, text: str):
         if state_name in ["awaiting_name", "awaiting_ca_number", "awaiting_language", "awaiting_gstin"]:
             await _process_registration_step(phone, text, trader, state_name)
             return
+
+    # A reply to "do you have this bill?" is answered before anything else,
+    # because a bare "haan" means nothing to the intent classifier and would
+    # otherwise fall through to a generic answer — losing the one reply that
+    # closes a recovery request. handle_reply returns False for anything that
+    # is not a yes/no/stop, so a trader who changes the subject is not trapped.
+    from app.services.itc_recovery import handle_reply as _handle_recovery_reply
+
+    if await _handle_recovery_reply(phone, trader, text):
+        return
 
     # Fully registered user — check for direct commands first
     if text_lower.startswith("update gstin"):
@@ -620,6 +641,14 @@ async def handle_invoice_message(phone: str, msg: dict):
                 inv_json.line_items,
                 diagnosis.hsn_validations,
             )
+
+        # If this photo is the bill we asked them for, close that request and
+        # move the conversation to the next one. Strictly best-effort — the
+        # invoice is already stored and diagnosed, and nothing here may
+        # jeopardise that.
+        if stored_invoice:
+            from app.services.itc_recovery import note_invoice_uploaded
+            await note_invoice_uploaded(trader, stored_invoice)
 
         # Auto-create supplier and link to trader (builds compliance graph)
         if supplier_gstin:
