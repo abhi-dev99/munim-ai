@@ -42,14 +42,14 @@ def get_current_trader_id(authorization: str = Header(None)) -> str:
     return trader_id
 
 def _phone_variants(phone: str) -> list[str]:
-    """A CA's number is stored on their clients as `ca_whatsapp_number`, but
-    inconsistently — sometimes with the 91 country code, sometimes without.
-    Match on both rather than normalising the column, which would need a
-    migration this database has a backlog of already."""
-    phone = phone or ""
-    full = phone if phone.startswith("91") else f"91{phone}"
-    ten = phone[-10:] if len(phone) >= 10 else phone
-    return [v for v in {full, ten} if v]
+    """Every spelling a CA's number might be stored under on their clients'
+    `ca_whatsapp_number`. Delegates to services/phone so inbound lookup,
+    outbound send and CA matching all agree on what "the same number" means —
+    this used to be a second, sloppier implementation that mangled anything
+    with a `+` or a space in it."""
+    from app.services.phone import match_variants
+
+    return match_variants(phone)
 
 
 async def get_practice_client_ids(current_trader_id: str) -> list[str]:
@@ -87,11 +87,16 @@ async def verify_trader_access(trader_id: str, current_trader_id: str = Depends(
     if not user_res.data:
         raise HTTPException(status_code=403, detail="Current user not found")
         
-    phone = user_res.data[0].get("whatsapp_number", "")
-    phone_full = phone if phone.startswith("91") else f"91{phone}"
-    phone_10 = phone[-10:] if len(phone) >= 10 else phone
-    
-    client_res = db.table("traders").select("id").eq("id", trader_id).in_("ca_whatsapp_number", [phone_full, phone_10]).execute()
+    # Same variant list the practice view uses. This was a third inline copy
+    # of the 91-prefix rule; a tenant-isolation check is the last place that
+    # should disagree with the rest of the codebase about what two numbers
+    # being equal means.
+    variants = _phone_variants(user_res.data[0].get("whatsapp_number", ""))
+    if not variants:
+        logger.warning(f"Access denied: user {current_trader_id} has no usable phone number")
+        raise HTTPException(status_code=403, detail="Not authorized to access this trader's data")
+
+    client_res = db.table("traders").select("id").eq("id", trader_id).in_("ca_whatsapp_number", variants).execute()
     
     if not client_res.data:
         logger.warning(f"Access denied: user {current_trader_id} tried to access trader {trader_id}")

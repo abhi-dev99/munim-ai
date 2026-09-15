@@ -25,12 +25,37 @@ def get_supabase() -> Client:
 # --- Trader Operations ---
 
 async def get_trader_by_phone(phone: str) -> Optional[dict]:
-    """Find a trader by WhatsApp number."""
+    """
+    Find a trader by WhatsApp number, whatever spelling it is stored under.
+
+    This used to be a bare `.eq("whatsapp_number", phone)`. Meta announces an
+    inbound sender as `919136875481`, but rows reach this table from CAs,
+    seed scripts and CSVs as ten bare digits or `+91 ...`, and an exact string
+    match never bridges the two. One trader in the live database -- the one
+    with 581 invoices -- was unreachable because of exactly that.
+
+    Precedence is deliberate and is what keeps this deterministic when two
+    rows hold the same number in different formats: the exact spelling
+    WhatsApp used wins, then the normalised international form, then the bare
+    local one. The row stored the way WhatsApp actually spells it owns the
+    handset; the others are legacy spellings of it.
+    """
+    from app.services.phone import match_variants
+
     try:
         db = get_supabase()
-        response = db.table("traders").select("*").eq("whatsapp_number", phone).execute()
-        if response.data and len(response.data) > 0:
-            return response.data[0]
+        for candidate in match_variants(phone) or [phone]:
+            response = db.table("traders").select("*").eq("whatsapp_number", candidate).execute()
+            rows = response.data or []
+            if rows:
+                if len(rows) > 1:
+                    # UNIQUE on whatsapp_number makes this unreachable today,
+                    # but say so loudly rather than picking silently if the
+                    # constraint is ever dropped.
+                    logger.warning(
+                        "Multiple traders stored under %s — using %s", candidate, rows[0].get("id")
+                    )
+                return rows[0]
         return None
     except Exception as e:
         logger.error(f"Failed to get trader by phone: {e}")
